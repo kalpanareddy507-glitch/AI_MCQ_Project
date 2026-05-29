@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+spacy
+transformers
+nltk
+torch
+celery
+redis
+streamlit
+streamlit-autorefresh
