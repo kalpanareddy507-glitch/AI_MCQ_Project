@@ -347,10 +347,10 @@ elif review_mode and view_type == "submitted":
 elif not exam_id and not review_mode:
     st.title("🎓 AI MCQ Generator (Admin Panel)")
 
-    topic = st.text_input("Topic Context", "Photosynthesis")
-    num_q = st.number_input("Questions Count", 1, 50, 6)
-    fixed_score_weight = st.number_input("Fixed Marks Per Question", 1.0, 100.0, 1.0)
-    student_headcount = st.number_input("Manually Add Student Count", 1, 100, 3)
+    topic = st.text_input("Topic Context", "Enter your Topic")
+    num_q = st.number_input("Questions Count", 1, 100, 1)
+    fixed_score_weight = st.number_input("Fixed Marks Per Question", 1, 100, 1)
+    student_headcount = st.number_input("Manually Add Student Count", 1, 100, 1)
 
     if st.button("Generate Secure Exam Suite", type="primary"):
         qs = generate_questions(topic, int(num_q))
@@ -435,7 +435,7 @@ else:
 
             with st.form("login"):
                 p = st.text_input("Enter the Password Keyphrase shown above", type="password")
-                ok = st.form_submit_button("Authenticate Workspace")
+                ok = st.form_submit_button("Start Exam")
 
                 if ok:
                     if p.strip() != active_password:
