@@ -1,4 +1,5 @@
 import streamlit as st
+from sqlalchemy import text
 import json
 import time
 import datetime
