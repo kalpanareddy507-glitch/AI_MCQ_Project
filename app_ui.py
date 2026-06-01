@@ -1,5 +1,4 @@
 import streamlit as st
-from sqlalchemy import text
 import json
 import time
 import datetime
@@ -8,6 +7,7 @@ import string
 import urllib.request
 import urllib.parse
 import re
+import psycopg2
 from streamlit_autorefresh import st_autorefresh
 
 # =========================================================
@@ -18,23 +18,6 @@ st.set_page_config(
     page_icon="🔐",
     layout="centered"
 )
-
-# Initialize all required global state keys safely at root execution
-if "admin_exam_target" not in st.session_state:
-    st.session_state.admin_exam_target = None
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-if "answers" not in st.session_state:
-    st.session_state.answers = {}
-if "manual_date_str" not in st.session_state:
-    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
-if "manual_time_str" not in st.session_state:
-    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
-
-# Initialize Supabase Database Connection
-conn = st.connection("postgresql", type="sql")
-
-st.title("AI MCQ Generator & Security Pipeline")
 
 # =========================================================
 # CSS STYLE DEFINITIONS
@@ -64,7 +47,6 @@ div.stButton > button[kind="primary"] {
     display: flex;
     justify-content: space-between;
 }
-/* Style to create an entirely clean, empty interface when an exam is locked */
 .empty-lock-screen {
     position: fixed;
     top: 0; left: 0; width: 100vw; height: 100vh;
@@ -79,6 +61,33 @@ div.stButton > button[kind="primary"] {
 }
 </style>
 """, unsafe_allow_html=True)
+
+# =========================================================
+# DATABASE INTEGRATION (MIGRATED TO CLOUD POSTGRESQL)
+# =========================================================
+def get_db_connection():
+    conn_str = st.secrets["postgres"]["db_url"]
+    return psycopg2.connect(conn_str)
+
+def execute_query(query, params=(), fetch=False, fetchone=False):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(query, params)
+        if fetchone:
+            result = cursor.fetchone()
+        elif fetch:
+            result = cursor.fetchall()
+        else:
+            conn.commit()
+            result = None
+        return result
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        cursor.close()
+        conn.close()
 
 # =========================================================
 # SYSTEM CORE HELPERS
@@ -100,8 +109,8 @@ def fetch_text(topic):
         return f"{topic} is an important concept."
 
 def generate_questions(topic, n):
-    text_data = fetch_text(topic)
-    sentences = [s for s in text_data.split(".") if len(s) > 20]
+    text = fetch_text(topic)
+    sentences = [s for s in text.split(".") if len(s) > 20]
     if not sentences:
         sentences = [f"{topic} concept explanation"]
 
@@ -157,6 +166,16 @@ else:
         st.session_state.current_tracking_id = active_id
         st.rerun()
 
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+if "answers" not in st.session_state:
+    st.session_state.answers = {}
+
+if "manual_date_str" not in st.session_state:
+    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
+if "manual_time_str" not in st.session_state:
+    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
+
 base_url = get_base_url()
 
 # =========================================================
@@ -168,31 +187,19 @@ if review_mode and view_type == "host":
         st.stop()
 
     st.title("📋 Admin Dashboard: Individual Student Results")
+    exam_data = execute_query("SELECT questions, points_per_question, password FROM exams WHERE exam_id=%s", (review_mode,), fetchone=True)
     
-    exam_df = conn.query(
-        "SELECT questions, points_per_question, password FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
-        params={"review_mode": review_mode}, 
-        ttl=0
-    )
-    
-    if exam_df.empty:
+    if not exam_data:
         st.error("Invalid Exam ID.")
         st.stop()
         
-    exam_data = exam_df.iloc[0]
-    num_qs = len(json.loads(exam_data["questions"]))
-    fixed_pts = float(exam_data["points_per_question"])
+    num_qs = len(json.loads(exam_data[0]))
+    fixed_pts = exam_data[1]
     max_possible = num_qs * fixed_pts
-    passwords_matrix = json.loads(exam_data["password"])
+    passwords_matrix = json.loads(exam_data[2])
     
-    sub_df = conn.query(
-        "SELECT username, final_score FROM submissions WHERE exam_id = :review_mode;", 
-        params={"review_mode": review_mode}, 
-        ttl=0
-    )
-    submissions_dict = {}
-    if not sub_df.empty:
-        submissions_dict = dict(zip(sub_df["username"], sub_df["final_score"]))
+    submissions_list = execute_query("SELECT username, final_score FROM submissions WHERE exam_id=%s", (review_mode,), fetch=True)
+    submissions_dict = {row[0]: row[1] for row in submissions_list}
     
     st.write("### All Registered Student Performance")
     
@@ -230,20 +237,19 @@ elif review_mode and view_type == "ranks":
         st.stop()
 
     st.title("🏆 Admin Dashboard: Student Leaderboard Ranks")
-    
-    leaderboard_df = conn.query("""
+    leaderboard = execute_query("""
         SELECT username, final_score FROM submissions 
-        WHERE exam_id = :review_mode 
-        ORDER BY final_score DESC, submitted_at ASC;
-    """, params={"review_mode": review_mode}, ttl=0)
+        WHERE exam_id=%s 
+        ORDER BY final_score DESC, submitted_at ASC
+    """, (review_mode,), fetch=True)
     
-    if leaderboard_df.empty:
+    if not leaderboard:
         st.info("No records completed yet.")
         st.stop()
         
-    for idx, row in leaderboard_df.iterrows():
-        user_lbl = row["username"]
-        val_score = row["final_score"]
+    for idx, position in enumerate(leaderboard):
+        user_lbl = position[0]
+        val_score = position[1]
         
         st.markdown(f"""
         <div class="sheet-row">
@@ -269,27 +275,15 @@ elif review_mode and view_type == "answers":
         st.stop()
 
     st.title("🔍 Admin Dashboard: Student Answer Sheet Analytics")
-    
-    exam_df = conn.query(
-        "SELECT questions, student_answers FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
-        params={"review_mode": review_mode}, 
-        ttl=0
-    )
-    
-    if exam_df.empty:
-        st.error("Invalid Exam Link context.")
-        st.stop()
-        
-    exam_row = exam_df.iloc[0]
-    qs = json.loads(exam_row["questions"])
-    all_students_answers = json.loads(exam_row["student_answers"]) if exam_row["student_answers"] else {}
+    exam_row = execute_query("SELECT questions, student_answers FROM exams WHERE exam_id=%s", (review_mode,), fetchone=True)
+    qs = json.loads(exam_row[0])
+    all_students_answers = json.loads(exam_row[1]) if exam_row[1] else {}
     
     if not all_students_answers:
         st.info("No answer analytics found.")
         st.stop()
         
     selected_student = st.selectbox("Select Student Profile to View Answer Sheet:", list(all_students_answers.keys()))
-    
     st.subheader(f"Detailed Answer Sheet for User: {selected_student}")
     student_specific_answers = all_students_answers.get(selected_student, {})
     
@@ -329,19 +323,8 @@ elif review_mode and view_type == "submitted":
         st.stop()
             
     if is_admin:
-        target_df = conn.query(
-            "SELECT target_students FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
-            params={"review_mode": review_mode}, 
-            ttl=0
-        )
-        target_count = target_df.iloc[0]["target_students"] if not target_df.empty else 0
-        
-        count_df = conn.query(
-            "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :review_mode;", 
-            params={"review_mode": review_mode}, 
-            ttl=0
-        )
-        current_count = count_df.iloc[0]["count"] if not count_df.empty else 0
+        target_count = execute_query("SELECT target_students FROM exams WHERE exam_id=%s", (review_mode,), fetchone=True)[0]
+        current_count = execute_query("SELECT COUNT(*) FROM submissions WHERE exam_id=%s", (review_mode,), fetchone=True)[0]
 
         st.title("⚡ Admin Control Center Panel Router")
         st.write(f"**Progress Metrics:** {current_count} out of {target_count} students completed.")
@@ -371,8 +354,8 @@ elif not exam_id and not review_mode:
     st.title("🎓 AI MCQ Generator (Admin Panel)")
 
     topic = st.text_input("Topic Context", value="", placeholder="Enter your Topic")
-    num_q = st.number_input("Questions Count", 1, 50, 5)
-    fixed_score_weight = st.number_input("Fixed Marks Per Question", 1, 100, 1)
+    num_q = st.number_input("Questions Count", 1, 50, 6)
+    fixed_score_weight = st.number_input("Fixed Marks Per Question", 1.0, 100.0, 1.0)
     student_headcount = st.number_input("Manually Add Student Count", 1, 100, 3)
 
     st.write("---")
@@ -409,36 +392,10 @@ elif not exam_id and not review_mode:
                 
             now = time.time()
 
-            with conn.session as session:
-                session.execute(
-                    text("""
-                        INSERT INTO exams (
-                            exam_id, username, password, questions, created_at, 
-                            expires_at, consumed, exam_duration, student_answers, 
-                            target_students, points_per_question, scheduled_start
-                        )
-                        VALUES (
-                            :exam, :user, :passwords, :qs, :now, 
-                            :expires, :consumed, :duration, :answers, 
-                            :target, :points, :start
-                        )
-                    """), 
-                    {
-                        "exam": exam,
-                        "user": "MULTI_STUDENT",
-                        "passwords": json.dumps(passwords_matrix),
-                        "qs": json.dumps(qs),
-                        "now": now,
-                        "expires": now + 3600*2,
-                        "consumed": 0,
-                        "duration": int(num_q)*45,
-                        "answers": json.dumps({}),
-                        "target": int(student_headcount),
-                        "points": float(fixed_score_weight),
-                        "start": epoch_start_time
-                    }
-                )
-                session.commit()
+            execute_query("""
+            INSERT INTO exams (exam_id, username, password, questions, created_at, expires_at, consumed, exam_duration, student_answers, target_students, points_per_question, scheduled_start) 
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (exam, "MULTI_STUDENT", json.dumps(passwords_matrix), json.dumps(qs), now, now + 3600*2, 0, int(num_q)*45, json.dumps({}), int(student_headcount), float(fixed_score_weight), epoch_start_time))
 
             student_link = f"{base_url}/?exam_id={exam}"
             st.session_state.admin_exam_target = exam
@@ -451,10 +408,8 @@ elif not exam_id and not review_mode:
             📅 Scheduled To Open: <code>{combined_dt.strftime('%Y-%m-%d %H:%M:%S')}</code>
             </div>
             """, unsafe_allow_html=True)
-            st.write("### Generated Student Passwords Credentials Matrix:")
-            st.json(passwords_matrix)
 
-    if st.session_state.admin_exam_target is not None:
+    if "admin_exam_target" in st.session_state:
         st.write("---")
         st.write("### 🛠️ Administrative Navigation Access")
         if st.button("Go to Admin Results & Rankings Hub", type="secondary"):
@@ -469,30 +424,13 @@ elif not exam_id and not review_mode:
 # STUDENT SECURE PORTAL ENTRY MAPPINGS
 # =========================================================
 else:
-    df_exam = conn.query(
-        "SELECT * FROM exams WHERE exam_id = :exam_id LIMIT 1;", 
-        params={"exam_id": exam_id}, 
-        ttl=0
-    )
+    data = execute_query("SELECT exam_id, username, password, questions, created_at, expires_at, consumed, exam_duration, student_answers, target_students, points_per_question, scheduled_start FROM exams WHERE exam_id=%s", (exam_id,), fetchone=True)
 
-    if df_exam.empty:
+    if not data:
         st.error("Invalid verification parameters.")
         st.stop()
 
-    data_row = df_exam.iloc[0]
-    eid = data_row["exam_id"]
-    group_name = data_row["username"]
-    password_matrix_json = data_row["password"]
-    qs_json = data_row["questions"]
-    created = data_row["created_at"]
-    expires = data_row["expires_at"]
-    consumed = data_row["consumed"]
-    duration = data_row["exam_duration"]
-    raw_answers = data_row["student_answers"]
-    target_students = data_row["target_students"]
-    points_per_question = float(data_row["points_per_question"])
-    scheduled_start = data_row["scheduled_start"]
-
+    (eid, group_name, password_matrix_json, qs_json, created, expires, consumed, duration, raw_answers, target_students, points_per_question, scheduled_start) = data
     passwords_matrix = json.loads(password_matrix_json)
     current_server_time = time.time()
 
@@ -511,16 +449,11 @@ else:
         st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
         st.stop()
 
-    sub_users_df = conn.query(
-        "SELECT username FROM submissions WHERE exam_id = :exam_id;", 
-        params={"exam_id": exam_id}, 
-        ttl=0
-    )
-    completed_usernames = sub_users_df["username"].tolist() if not sub_users_df.empty else []
+    completed_rows = execute_query("SELECT username FROM submissions WHERE exam_id=%s", (exam_id,), fetch=True)
+    completed_usernames = [row[0] for row in completed_rows]
 
     if not st.session_state.auth:
         st.title("🔐 Secure Access Environment")
-        
         available_options = [user for user in passwords_matrix.keys() if user not in completed_usernames]
         
         if not available_options:
@@ -534,7 +467,6 @@ else:
         
         if selected_user != "--- Select Your Username ---":
             active_password = passwords_matrix.get(selected_user)
-            
             st.markdown(f"""
             <div class="token-box" style="border-left-color: #D97706; margin-bottom: 20px;">
             👤 Username Selected: <code>{selected_user}</code><br>
@@ -550,12 +482,8 @@ else:
                     if p.strip() != active_password:
                         st.error("Access Control Warning: Password must match the selected username's passcode.")
                     else:
-                        check_sub = conn.query(
-                            "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :exam_id AND username = :user;", 
-                            params={"exam_id": exam_id, "user": selected_user}, 
-                            ttl=0
-                        )
-                        if check_sub.iloc[0]["count"] > 0:
+                        already_done = execute_query("SELECT COUNT(*) FROM submissions WHERE exam_id=%s AND username=%s", (exam_id, selected_user), fetchone=True)[0]
+                        if already_done > 0:
                             st.error("This student username has already logged in or completed this evaluation session!")
                         else:
                             st.session_state.auth = True
@@ -568,8 +496,7 @@ else:
             st.info("Please expand the dropdown selector above to verify your account seating.")
     else:
         st.title(f"📝 Active Workspace: {st.session_state.current_candidate_user}")
-        st.sidebar.markdown(f"**Logged in as:** `{st.session_state.current_candidate_user}`")
-        st_autorefresh(interval=1000, key="exam_running_refresh")
+        st_autorefresh(interval=1000, key="exam")
 
         qs = st.session_state.questions
         elapsed = time.time() - st.session_state.start
@@ -579,48 +506,29 @@ else:
         st.warning(f"Time remaining: {m:02d}:{s:02d}")
 
         def process_and_submit_exam():
-            exam_row_df = conn.query(
-                "SELECT student_answers FROM exams WHERE exam_id = :exam_id LIMIT 1;", 
-                params={"exam_id": exam_id}, 
-                ttl=0
-            )
-            existing_answers_raw = exam_row_df.iloc[0]["student_answers"] if not exam_row_df.empty else "{}"
+            existing_answers_raw = execute_query("SELECT student_answers FROM exams WHERE exam_id=%s", (exam_id,), fetchone=True)[0]
             master_answers_dict = json.loads(existing_answers_raw) if existing_answers_raw else {}
             
             student_profile_name = st.session_state.current_candidate_user
             master_answers_dict[student_profile_name] = {}
-            
             for k, v in st.session_state.answers.items():
                 master_answers_dict[student_profile_name][str(k)] = v
                 
+            execute_query("UPDATE exams SET student_answers=%s WHERE exam_id=%s", (json.dumps(master_answers_dict), exam_id))
+            
             final_calculated_score = 0.0
             for index, question in enumerate(qs):
                 student_choice = st.session_state.answers.get(index)
                 correct_choice = question["correct"]
-                
                 if student_choice == correct_choice:
                     final_calculated_score += points_per_question
                 elif student_choice is not None:
                     final_calculated_score -= 1.0
-
-            with conn.session as session:
-                session.execute(
-                    text("UPDATE exams SET student_answers = :answers WHERE exam_id = :exam_id;"),
-                    {"answers": json.dumps(master_answers_dict), "exam_id": exam_id}
-                )
-                session.execute(
-                    text("""
-                        INSERT INTO submissions (exam_id, username, final_score, submitted_at)
-                        VALUES (:exam_id, :user, :score, :now);
-                    """),
-                    {
-                        "exam_id": exam_id,
-                        "user": student_profile_name,
-                        "score": final_calculated_score,
-                        "now": time.time()
-                    }
-                )
-                session.commit()
+            
+            execute_query("""
+                INSERT INTO submissions (exam_id, username, final_score, submitted_at)
+                VALUES (%s, %s, %s, %s)
+            """, (exam_id, student_profile_name, final_calculated_score, time.time()))
             
             st.session_state.clear()
             st.query_params.clear()
@@ -630,9 +538,6 @@ else:
 
         if remaining == 0:
             process_and_submit_exam()
-
-        def update_answer(q_idx):
-            st.session_state.answers[q_idx] = st.session_state[f"radio_q_{q_idx}"]
 
         for i, q in enumerate(qs):
             st.markdown(f'### Question {i+1}')
@@ -646,10 +551,13 @@ else:
                 options=q["options"],
                 index=default_index,
                 key=f"radio_q_{i}",
-                label_visibility="collapsed",
-                on_change=update_answer,
-                args=(i,)
+                label_visibility="collapsed"
             )
+
+            if chosen_option != saved_choice:
+                st.session_state.answers[i] = chosen_option
+                st.rerun()
+                
             st.write("---")
 
         if st.button("Finalize and Submit", type="primary"):
