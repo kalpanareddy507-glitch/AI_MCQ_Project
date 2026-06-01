@@ -30,6 +30,14 @@ if "manual_date_str" not in st.session_state:
     st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
 if "manual_time_str" not in st.session_state:
     st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
+if "current_candidate_user" not in st.session_state:
+    st.session_state.current_candidate_user = None
+if "questions" not in st.session_state:
+    st.session_state.questions = []
+if "start" not in st.session_state:
+    st.session_state.start = None
+if "duration" not in st.session_state:
+    st.session_state.duration = 0
 
 # Initialize Supabase Database Connection
 conn = st.connection("postgresql", type="sql")
