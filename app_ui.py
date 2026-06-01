@@ -387,21 +387,21 @@ elif not exam_id and not review_mode:
                 
             now = time.time()
 
-            # Execute write via Supabase Cloud Engine
+            # FIX: Cleaned syntax mappings structure
             with conn.session as session:
                 session.execute(
-                    """
-                    INSERT INTO exams (
-                        exam_id, username, password, questions, created_at, 
-                        expires_at, consumed, exam_duration, student_answers, 
-                        target_students, points_per_question, scheduled_start
-                    ) 
-                    VALUES (
-                        :exam, :user, :passwords, :qs, :now, 
-                        :expires, :consumed, :duration, :answers, 
-                        :target, :points, :start
-                    );
-                    """,
+                    text("""
+                        INSERT INTO exams (
+                            exam_id, username, password, questions, created_at, 
+                            expires_at, consumed, exam_duration, student_answers, 
+                            target_students, points_per_question, scheduled_start
+                        )
+                        VALUES (
+                            :exam, :user, :passwords, :qs, :now, 
+                            :expires, :consumed, :duration, :answers, 
+                            :target, :points, :start
+                        )
+                    """), 
                     {
                         "exam": exam,
                         "user": "MULTI_STUDENT",
@@ -537,6 +537,7 @@ else:
             st.info("Please expand the dropdown selector above to verify your account seating.")
     else:
         st.title(f"📝 Active Workspace: {st.session_state.current_candidate_user}")
+        st.sidebar.markdown(f"**Logged in as:** `{st.session_state.current_candidate_user}`")
         st_autorefresh(interval=1000, key="exam")
 
         qs = st.session_state.questions
@@ -567,16 +568,17 @@ else:
                 elif student_choice is not None:
                     final_calculated_score -= 1.0
 
+            # FIX: Cleansed string trailing parenthesis and parameter formatting
             with conn.session as session:
                 session.execute(
-                    "UPDATE exams SET student_answers = :answers WHERE exam_id = :exam_id;",
+                    text("UPDATE exams SET student_answers = :answers WHERE exam_id = :exam_id;"),
                     {"answers": json.dumps(master_answers_dict), "exam_id": exam_id}
                 )
                 session.execute(
-                    """
-                    INSERT INTO submissions (exam_id, username, final_score, submitted_at)
-                    VALUES (:exam_id, :user, :score, :now);
-                    """,
+                    text("""
+                        INSERT INTO submissions (exam_id, username, final_score, submitted_at)
+                        VALUES (:exam_id, :user, :score, :now);
+                    """),
                     {
                         "exam_id": exam_id,
                         "user": student_profile_name,
