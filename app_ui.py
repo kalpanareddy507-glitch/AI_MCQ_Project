@@ -22,8 +22,6 @@ st.set_page_config(
 # 1. Initialize your Supabase Connection
 conn = st.connection("postgresql", type="sql")
 
-# 2. Your exciting existing UI code starts here...
-st.title("AI MCQ Generator & Security Pipeline")
 
 # =========================================================
 # CSS STYLE DEFINITIONS
@@ -89,8 +87,8 @@ def fetch_text(topic):
         return f"{topic} is an important concept."
 
 def generate_questions(topic, n):
-    text = fetch_text(topic)
-    sentences = [s for s in text.split(".") if len(s) > 20]
+    text_data = fetch_text(topic)
+    sentences = [s for s in text_data.split(".") if len(s) > 20]
     if not sentences:
         sentences = [f"{topic} concept explanation"]
 
@@ -169,7 +167,12 @@ if review_mode and view_type == "host":
 
     st.title("📋 Admin Dashboard: Individual Student Results")
     
-    exam_df = conn.query("SELECT questions, points_per_question, password FROM exams WHERE exam_id = :review_mode LIMIT 1;", params={"review_mode": review_mode}, ttl=0)
+    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+    exam_df = conn.query(
+        "SELECT questions, points_per_question, password FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
+        params={"review_mode": review_mode}, 
+        ttl=0
+    )
     
     if exam_df.empty:
         st.error("Invalid Exam ID.")
@@ -181,7 +184,12 @@ if review_mode and view_type == "host":
     max_possible = num_qs * fixed_pts
     passwords_matrix = json.loads(exam_data["password"])
     
-    sub_df = conn.query("SELECT username, final_score FROM submissions WHERE exam_id = :review_mode;", params={"review_mode": review_mode}, ttl=0)
+    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+    sub_df = conn.query(
+        "SELECT username, final_score FROM submissions WHERE exam_id = :review_mode;", 
+        params={"review_mode": review_mode}, 
+        ttl=0
+    )
     submissions_dict = {}
     if not sub_df.empty:
         submissions_dict = dict(zip(sub_df["username"], sub_df["final_score"]))
@@ -222,6 +230,8 @@ elif review_mode and view_type == "ranks":
         st.stop()
 
     st.title("🏆 Admin Dashboard: Student Leaderboard Ranks")
+    
+    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
     leaderboard_df = conn.query("""
         SELECT username, final_score FROM submissions 
         WHERE exam_id = :review_mode 
@@ -260,7 +270,13 @@ elif review_mode and view_type == "answers":
         st.stop()
 
     st.title("🔍 Admin Dashboard: Student Answer Sheet Analytics")
-    exam_df = conn.query("SELECT questions, student_answers FROM exams WHERE exam_id = :review_mode LIMIT 1;", params={"review_mode": review_mode}, ttl=0)
+    
+    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+    exam_df = conn.query(
+        "SELECT questions, student_answers FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
+        params={"review_mode": review_mode}, 
+        ttl=0
+    )
     
     if exam_df.empty:
         st.error("Invalid Exam Link context.")
@@ -315,10 +331,20 @@ elif review_mode and view_type == "submitted":
         st.stop()
             
     if is_admin:
-        target_df = conn.query("SELECT target_students FROM exams WHERE exam_id = :review_mode LIMIT 1;", params={"review_mode": review_mode}, ttl=0)
+        # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+        target_df = conn.query(
+            "SELECT target_students FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
+            params={"review_mode": review_mode}, 
+            ttl=0
+        )
         target_count = target_df.iloc[0]["target_students"] if not target_df.empty else 0
         
-        count_df = conn.query("SELECT COUNT(*) as count FROM submissions WHERE exam_id = :review_mode;", params={"review_mode": review_mode}, ttl=0)
+        # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+        count_df = conn.query(
+            "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :review_mode;", 
+            params={"review_mode": review_mode}, 
+            ttl=0
+        )
         current_count = count_df.iloc[0]["count"] if not count_df.empty else 0
 
         st.title("⚡ Admin Control Center Panel Router")
@@ -387,7 +413,7 @@ elif not exam_id and not review_mode:
                 
             now = time.time()
 
-            # FIX: Cleaned syntax mappings structure
+            # KEEP: session.execute MUST use the text() constructor wrapper for parameters initialization
             with conn.session as session:
                 session.execute(
                     text("""
@@ -446,6 +472,7 @@ elif not exam_id and not review_mode:
 # STUDENT SECURE PORTAL ENTRY MAPPINGS
 # =========================================================
 else:
+    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
     df_exam = conn.query(
         "SELECT * FROM exams WHERE exam_id = :exam_id LIMIT 1;", 
         params={"exam_id": exam_id}, 
@@ -488,7 +515,12 @@ else:
         st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
         st.stop()
 
-    sub_users_df = conn.query("SELECT username FROM submissions WHERE exam_id = :exam_id;", params={"exam_id": exam_id}, ttl=0)
+    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+    sub_users_df = conn.query(
+        "SELECT username FROM submissions WHERE exam_id = :exam_id;", 
+        params={"exam_id": exam_id}, 
+        ttl=0
+    )
     completed_usernames = sub_users_df["username"].tolist() if not sub_users_df.empty else []
 
     if not st.session_state.auth:
@@ -523,7 +555,12 @@ else:
                     if p.strip() != active_password:
                         st.error("Access Control Warning: Password must match the selected username's passcode.")
                     else:
-                        check_sub = conn.query("SELECT COUNT(*) as count FROM submissions WHERE exam_id = :exam_id AND username = :user;", params={"exam_id": exam_id, "user": selected_user}, ttl=0)
+                        # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+                        check_sub = conn.query(
+                            "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :exam_id AND username = :user;", 
+                            params={"exam_id": exam_id, "user": selected_user}, 
+                            ttl=0
+                        )
                         if check_sub.iloc[0]["count"] > 0:
                             st.error("This student username has already logged in or completed this evaluation session!")
                         else:
@@ -548,7 +585,12 @@ else:
         st.warning(f"Time remaining: {m:02d}:{s:02d}")
 
         def process_and_submit_exam():
-            exam_row_df = conn.query("SELECT student_answers FROM exams WHERE exam_id = :exam_id LIMIT 1;", params={"exam_id": exam_id}, ttl=0)
+            # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
+            exam_row_df = conn.query(
+                "SELECT student_answers FROM exams WHERE exam_id = :exam_id LIMIT 1;", 
+                params={"exam_id": exam_id}, 
+                ttl=0
+            )
             existing_answers_raw = exam_row_df.iloc[0]["student_answers"] if not exam_row_df.empty else "{}"
             master_answers_dict = json.loads(existing_answers_raw) if existing_answers_raw else {}
             
@@ -568,7 +610,7 @@ else:
                 elif student_choice is not None:
                     final_calculated_score -= 1.0
 
-            # FIX: Cleansed string trailing parenthesis and parameter formatting
+            # KEEP: session.execute MUST keep the text() wrapper
             with conn.session as session:
                 session.execute(
                     text("UPDATE exams SET student_answers = :answers WHERE exam_id = :exam_id;"),
@@ -597,6 +639,9 @@ else:
         if remaining == 0:
             process_and_submit_exam()
 
+        def update_answer(q_idx):
+            st.session_state.answers[q_idx] = st.session_state[f"radio_q_{q_idx}"]
+
         for i, q in enumerate(qs):
             st.markdown(f'### Question {i+1}')
             st.write(q["q"])
@@ -609,13 +654,10 @@ else:
                 options=q["options"],
                 index=default_index,
                 key=f"radio_q_{i}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                on_change=update_answer,
+                args=(i,)
             )
-
-            if chosen_option != saved_choice:
-                st.session_state.answers[i] = chosen_option
-                st.rerun()
-                
             st.write("---")
 
         if st.button("Finalize and Submit", type="primary"):
