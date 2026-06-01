@@ -64,7 +64,7 @@ div.stButton > button[kind="primary"] {
 """, unsafe_allow_html=True)
 
 # =========================================================
-# DATABASE INTEGRATION
+# DATABASE INTEGRATION (Updated Name to Avoid Prior Schema Version Conflicts)
 # =========================================================
 conn = sqlite3.connect("exams_v3.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -389,16 +389,12 @@ elif not exam_id and not review_mode:
         if not topic.strip():
             st.error("🚨 Enter the text! Topic Context field cannot be left blank.")
         else:
+            # Parse custom strings into exact timestamps
             try:
                 parsed_date = datetime.datetime.strptime(st.session_state.manual_date_str.strip(), "%Y-%m-%d").date()
                 parsed_time = datetime.datetime.strptime(st.session_state.manual_time_str.strip(), "%H:%M").time()
                 combined_dt = datetime.datetime.combine(parsed_date, parsed_time)
-                
-                # FIXED TIMEZONE MISMATCH: Make the datetime timezone-aware based on the current local system environment
-                local_tz = datetime.datetime.now().astimezone().tzinfo
-                combined_dt_localized = combined_dt.replace(tzinfo=local_tz)
-                epoch_start_time = combined_dt_localized.timestamp()
-                
+                epoch_start_time = combined_dt.timestamp()
             except Exception as e:
                 st.error("❌ Invalid Format! Please enter the Date exactly as YYYY-MM-DD and Time as HH:MM.")
                 st.stop()
