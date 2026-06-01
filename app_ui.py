@@ -19,9 +19,22 @@ st.set_page_config(
     layout="centered"
 )
 
-# 1. Initialize your Supabase Connection
+# Initialize all required global state keys safely at root execution
+if "admin_exam_target" not in st.session_state:
+    st.session_state.admin_exam_target = None
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+if "answers" not in st.session_state:
+    st.session_state.answers = {}
+if "manual_date_str" not in st.session_state:
+    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
+if "manual_time_str" not in st.session_state:
+    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
+
+# Initialize Supabase Database Connection
 conn = st.connection("postgresql", type="sql")
 
+st.title("AI MCQ Generator & Security Pipeline")
 
 # =========================================================
 # CSS STYLE DEFINITIONS
@@ -144,17 +157,6 @@ else:
         st.session_state.current_tracking_id = active_id
         st.rerun()
 
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-if "answers" not in st.session_state:
-    st.session_state.answers = {}
-
-# INITIALIZE TIME SELECTION MEMORY
-if "manual_date_str" not in st.session_state:
-    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
-if "manual_time_str" not in st.session_state:
-    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
-
 base_url = get_base_url()
 
 # =========================================================
@@ -167,7 +169,6 @@ if review_mode and view_type == "host":
 
     st.title("📋 Admin Dashboard: Individual Student Results")
     
-    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
     exam_df = conn.query(
         "SELECT questions, points_per_question, password FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
         params={"review_mode": review_mode}, 
@@ -184,7 +185,6 @@ if review_mode and view_type == "host":
     max_possible = num_qs * fixed_pts
     passwords_matrix = json.loads(exam_data["password"])
     
-    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
     sub_df = conn.query(
         "SELECT username, final_score FROM submissions WHERE exam_id = :review_mode;", 
         params={"review_mode": review_mode}, 
@@ -231,7 +231,6 @@ elif review_mode and view_type == "ranks":
 
     st.title("🏆 Admin Dashboard: Student Leaderboard Ranks")
     
-    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
     leaderboard_df = conn.query("""
         SELECT username, final_score FROM submissions 
         WHERE exam_id = :review_mode 
@@ -271,7 +270,6 @@ elif review_mode and view_type == "answers":
 
     st.title("🔍 Admin Dashboard: Student Answer Sheet Analytics")
     
-    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
     exam_df = conn.query(
         "SELECT questions, student_answers FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
         params={"review_mode": review_mode}, 
@@ -302,363 +300,4 @@ elif review_mode and view_type == "answers":
         if user_choice is None:
             status_text, status_color = "⚠️ Unanswered", "#64748b"
         elif user_choice == correct_choice:
-            status_text, status_color = f"✅ Correct Match ({q['correct']})", "#15803D"
-        else:
-            status_text, status_color = f"❌ Wrong Match (Selected: '{user_choice}' | Correct: '{correct_choice}')", "#B91C1C"
-            
-        st.markdown(f"""
-        <div class="sheet-row">
-            <div><strong>Question {i+1} Evaluation</strong></div>
-            <div style="color: {status_color}; font-weight: bold;">{status_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    if st.button("Back to Control Router"):
-        st.query_params.clear()
-        st.query_params["review"] = review_mode
-        st.query_params["view"] = "submitted"
-        st.query_params["admin"] = "true"
-        st.rerun()
-    st.stop()
-
-# =========================================================
-# ROUTE 4: MASTER HUBS ROUTER PAGE SCREEN
-# =========================================================
-elif review_mode and view_type == "submitted":
-    if not is_admin:
-        st.title("📝 Submission Complete")
-        st.success("Thank you! Your exam has been successfully submitted.")
-        st.stop()
-            
-    if is_admin:
-        # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
-        target_df = conn.query(
-            "SELECT target_students FROM exams WHERE exam_id = :review_mode LIMIT 1;", 
-            params={"review_mode": review_mode}, 
-            ttl=0
-        )
-        target_count = target_df.iloc[0]["target_students"] if not target_df.empty else 0
-        
-        # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
-        count_df = conn.query(
-            "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :review_mode;", 
-            params={"review_mode": review_mode}, 
-            ttl=0
-        )
-        current_count = count_df.iloc[0]["count"] if not count_df.empty else 0
-
-        st.title("⚡ Admin Control Center Panel Router")
-        st.write(f"**Progress Metrics:** {current_count} out of {target_count} students completed.")
-        
-        host_link = f"{base_url}/?review={review_mode}&view=host&admin=true"
-        ranks_link = f"{base_url}/?review={review_mode}&view=ranks&admin=true"
-        answers_link = f"{base_url}/?review={review_mode}&view=answers&admin=true"
-        
-        st.markdown(f"""
-        <div class="token-box">
-        🔹 <b>Individual Student Marks Layout:</b> <a href="{host_link}" target="_self">Open Scores Sheet</a><br><br>
-        🔹 <b>Isolated Rankings Board Layout:</b> <a href="{ranks_link}" target="_self">Open Ranks Sheet</a><br><br>
-        🔹 <b>Diagnostic Student Answer Sheets:</b> <a href="{answers_link}" target="_self">Open Individual Answer Sheets</a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("Clear Cycle & Restart App"):
-            st.query_params.clear()
-            st.session_state.clear()
-            st.rerun()
-        st.stop()
-
-# =========================================================
-# TEACHER PANEL
-# =========================================================
-elif not exam_id and not review_mode:
-    st.title("🎓 AI MCQ Generator (Admin Panel)")
-
-    topic = st.text_input("Topic Context", value="", placeholder="Enter your Topic")
-    num_q = st.number_input("Questions Count", 1, 50, 5)
-    fixed_score_weight = st.number_input("Fixed Marks Per Question", 1, 100, 1)
-    student_headcount = st.number_input("Manually Add Student Count", 1, 100, 3)
-
-    st.write("---")
-    st.subheader("📅 Schedule Activation Configuration (Manual Entry)")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        input_date = st.text_input("Enter Date (YYYY-MM-DD)", value=st.session_state.manual_date_str)
-        st.session_state.manual_date_str = input_date
-    with col2:
-        input_time = st.text_input("Enter Start Time (HH:MM - 24Hr format)", value=st.session_state.manual_time_str)
-        st.session_state.manual_time_str = input_time
-
-    if st.button("Generate Secure Exam Suite", type="primary"):
-        if not topic.strip():
-            st.error("🚨 Enter the text! Topic Context field cannot be left blank.")
-        else:
-            try:
-                parsed_date = datetime.datetime.strptime(st.session_state.manual_date_str.strip(), "%Y-%m-%d").date()
-                parsed_time = datetime.datetime.strptime(st.session_state.manual_time_str.strip(), "%H:%M").time()
-                combined_dt = datetime.datetime.combine(parsed_date, parsed_time)
-                epoch_start_time = combined_dt.timestamp()
-            except Exception as e:
-                st.error("❌ Invalid Format! Please enter the Date exactly as YYYY-MM-DD and Time as HH:MM.")
-                st.stop()
-
-            qs = generate_questions(topic, int(num_q))
-            exam = token(8)
-            
-            passwords_matrix = {}
-            for idx in range(1, int(student_headcount) + 1):
-                generated_username = f"CANDIDATE_{idx}"
-                passwords_matrix[generated_username] = f"PASS_{token(4)}"
-                
-            now = time.time()
-
-            # KEEP: session.execute MUST use the text() constructor wrapper for parameters initialization
-            with conn.session as session:
-                session.execute(
-                    text("""
-                        INSERT INTO exams (
-                            exam_id, username, password, questions, created_at, 
-                            expires_at, consumed, exam_duration, student_answers, 
-                            target_students, points_per_question, scheduled_start
-                        )
-                        VALUES (
-                            :exam, :user, :passwords, :qs, :now, 
-                            :expires, :consumed, :duration, :answers, 
-                            :target, :points, :start
-                        )
-                    """), 
-                    {
-                        "exam": exam,
-                        "user": "MULTI_STUDENT",
-                        "passwords": json.dumps(passwords_matrix),
-                        "qs": json.dumps(qs),
-                        "now": now,
-                        "expires": now + 3600*2,
-                        "consumed": 0,
-                        "duration": int(num_q)*45,
-                        "answers": json.dumps({}),
-                        "target": int(student_headcount),
-                        "points": float(fixed_score_weight),
-                        "start": epoch_start_time
-                    }
-                )
-                session.commit()
-
-            student_link = f"{base_url}/?exam_id={exam}"
-            st.session_state.admin_exam_target = exam
-            st.query_params.clear()
-
-            st.success(f"Exam Suite Generated Successfully!")
-            st.markdown(f"""
-            <div class="token-box">
-            <b>Shared Testing URL for Students:</b> <code>{student_link}</code><br>
-            📅 Scheduled To Open: <code>{combined_dt.strftime('%Y-%m-%d %H:%M:%S')}</code>
-            </div>
-            """, unsafe_allow_html=True)
-
-    if "admin_exam_target" in st.session_state:
-        st.write("---")
-        st.write("### 🛠️ Administrative Navigation Access")
-        if st.button("Go to Admin Results & Rankings Hub", type="secondary"):
-            target = st.session_state.admin_exam_target
-            st.query_params.clear()
-            st.query_params["review"] = target
-            st.query_params["view"] = "submitted"
-            st.query_params["admin"] = "true"
-            st.rerun()
-
-# =========================================================
-# STUDENT SECURE PORTAL ENTRY MAPPINGS
-# =========================================================
-else:
-    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
-    df_exam = conn.query(
-        "SELECT * FROM exams WHERE exam_id = :exam_id LIMIT 1;", 
-        params={"exam_id": exam_id}, 
-        ttl=0
-    )
-
-    if df_exam.empty:
-        st.error("Invalid verification parameters.")
-        st.stop()
-
-    data_row = df_exam.iloc[0]
-    eid = data_row["exam_id"]
-    group_name = data_row["username"]
-    password_matrix_json = data_row["password"]
-    qs_json = data_row["questions"]
-    created = data_row["created_at"]
-    expires = data_row["expires_at"]
-    consumed = data_row["consumed"]
-    duration = data_row["exam_duration"]
-    raw_answers = data_row["student_answers"]
-    target_students = data_row["target_students"]
-    points_per_question = float(data_row["points_per_question"])
-    scheduled_start = data_row["scheduled_start"]
-
-    passwords_matrix = json.loads(password_matrix_json)
-    current_server_time = time.time()
-
-    if current_server_time < scheduled_start:
-        st_autorefresh(interval=2000, key="empty_countdown_refresh")
-        readable_target_time = datetime.datetime.fromtimestamp(scheduled_start).strftime('%Y-%m-%d %H:%M:%S')
-        st.markdown(f"""
-        <div class="empty-lock-screen">
-            This exam will open at: {readable_target_time}
-        </div>
-        """, unsafe_allow_html=True)
-        st.stop()
-
-    if not st.session_state.auth and (current_server_time > (scheduled_start + 300)):
-        st.title("❌ Access Expired")
-        st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
-        st.stop()
-
-    # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
-    sub_users_df = conn.query(
-        "SELECT username FROM submissions WHERE exam_id = :exam_id;", 
-        params={"exam_id": exam_id}, 
-        ttl=0
-    )
-    completed_usernames = sub_users_df["username"].tolist() if not sub_users_df.empty else []
-
-    if not st.session_state.auth:
-        st.title("🔐 Secure Access Environment")
-        
-        available_options = [user for user in passwords_matrix.keys() if user not in completed_usernames]
-        
-        if not available_options:
-            st.title("📝 Session Complete")
-            st.success("Thank you! Your exam has been successfully submitted.")
-            st.stop()
-            
-        st.write("Select your Username from the dropdown menu to see your matching password:")
-        options_with_placeholder = ["--- Select Your Username ---"] + available_options
-        selected_user = st.selectbox("Choose Your Auto-Generated Username", options_with_placeholder, index=0)
-        
-        if selected_user != "--- Select Your Username ---":
-            active_password = passwords_matrix.get(selected_user)
-            
-            st.markdown(f"""
-            <div class="token-box" style="border-left-color: #D97706; margin-bottom: 20px;">
-            👤 Username Selected: <code>{selected_user}</code><br>
-            🔑 Match Password Keyphrase: <code>{active_password}</code>
-            </div>
-            """, unsafe_allow_html=True)
-
-            with st.form("login"):
-                p = st.text_input("Enter the Password Keyphrase shown above", type="password")
-                ok = st.form_submit_button("Authenticate Workspace")
-
-                if ok:
-                    if p.strip() != active_password:
-                        st.error("Access Control Warning: Password must match the selected username's passcode.")
-                    else:
-                        # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
-                        check_sub = conn.query(
-                            "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :exam_id AND username = :user;", 
-                            params={"exam_id": exam_id, "user": selected_user}, 
-                            ttl=0
-                        )
-                        if check_sub.iloc[0]["count"] > 0:
-                            st.error("This student username has already logged in or completed this evaluation session!")
-                        else:
-                            st.session_state.auth = True
-                            st.session_state.current_candidate_user = selected_user
-                            st.session_state.questions = json.loads(qs_json)
-                            st.session_state.start = time.time()
-                            st.session_state.duration = duration
-                            st.rerun()
-        else:
-            st.info("Please expand the dropdown selector above to verify your account seating.")
-    else:
-        st.title(f"📝 Active Workspace: {st.session_state.current_candidate_user}")
-        st.sidebar.markdown(f"**Logged in as:** `{st.session_state.current_candidate_user}`")
-        st_autorefresh(interval=1000, key="exam")
-
-        qs = st.session_state.questions
-        elapsed = time.time() - st.session_state.start
-        remaining = max(0, int(st.session_state.duration - elapsed))
-
-        m, s = divmod(remaining, 60)
-        st.warning(f"Time remaining: {m:02d}:{s:02d}")
-
-        def process_and_submit_exam():
-            # CHANGED: Reverted to a plain string parameter to allow native Streamlit hashing
-            exam_row_df = conn.query(
-                "SELECT student_answers FROM exams WHERE exam_id = :exam_id LIMIT 1;", 
-                params={"exam_id": exam_id}, 
-                ttl=0
-            )
-            existing_answers_raw = exam_row_df.iloc[0]["student_answers"] if not exam_row_df.empty else "{}"
-            master_answers_dict = json.loads(existing_answers_raw) if existing_answers_raw else {}
-            
-            student_profile_name = st.session_state.current_candidate_user
-            master_answers_dict[student_profile_name] = {}
-            
-            for k, v in st.session_state.answers.items():
-                master_answers_dict[student_profile_name][str(k)] = v
-                
-            final_calculated_score = 0.0
-            for index, question in enumerate(qs):
-                student_choice = st.session_state.answers.get(index)
-                correct_choice = question["correct"]
-                
-                if student_choice == correct_choice:
-                    final_calculated_score += points_per_question
-                elif student_choice is not None:
-                    final_calculated_score -= 1.0
-
-            # KEEP: session.execute MUST keep the text() wrapper
-            with conn.session as session:
-                session.execute(
-                    text("UPDATE exams SET student_answers = :answers WHERE exam_id = :exam_id;"),
-                    {"answers": json.dumps(master_answers_dict), "exam_id": exam_id}
-                )
-                session.execute(
-                    text("""
-                        INSERT INTO submissions (exam_id, username, final_score, submitted_at)
-                        VALUES (:exam_id, :user, :score, :now);
-                    """),
-                    {
-                        "exam_id": exam_id,
-                        "user": student_profile_name,
-                        "score": final_calculated_score,
-                        "now": time.time()
-                    }
-                )
-                session.commit()
-            
-            st.session_state.clear()
-            st.query_params.clear()
-            st.query_params["review"] = exam_id
-            st.query_params["view"] = "submitted"
-            st.rerun()
-
-        if remaining == 0:
-            process_and_submit_exam()
-
-        def update_answer(q_idx):
-            st.session_state.answers[q_idx] = st.session_state[f"radio_q_{q_idx}"]
-
-        for i, q in enumerate(qs):
-            st.markdown(f'### Question {i+1}')
-            st.write(q["q"])
-
-            saved_choice = st.session_state.answers.get(i, None)
-            default_index = q["options"].index(saved_choice) if saved_choice in q["options"] else None
-
-            chosen_option = st.radio(
-                label=f"Choose option for question {i+1}:",
-                options=q["options"],
-                index=default_index,
-                key=f"radio_q_{i}",
-                label_visibility="collapsed",
-                on_change=update_answer,
-                args=(i,)
-            )
-            st.write("---")
-
-        if st.button("Finalize and Submit", type="primary"):
-            process_and_submit_exam()
+            status_text, status_color = f"✅ Correct Match ({q['correct']})
