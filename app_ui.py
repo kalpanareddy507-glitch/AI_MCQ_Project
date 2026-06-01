@@ -64,7 +64,7 @@ div.stButton > button[kind="primary"] {
 """, unsafe_allow_html=True)
 
 # =========================================================
-# DATABASE INTEGRATION (Updated Name to Avoid Prior Schema Version Conflicts)
+# DATABASE INTEGRATION
 # =========================================================
 conn = sqlite3.connect("exams_v3.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -389,12 +389,15 @@ elif not exam_id and not review_mode:
         if not topic.strip():
             st.error("🚨 Enter the text! Topic Context field cannot be left blank.")
         else:
-            # Parse custom strings into exact timestamps
             try:
                 parsed_date = datetime.datetime.strptime(st.session_state.manual_date_str.strip(), "%Y-%m-%d").date()
                 parsed_time = datetime.datetime.strptime(st.session_state.manual_time_str.strip(), "%H:%M").time()
                 combined_dt = datetime.datetime.combine(parsed_date, parsed_time)
-                epoch_start_time = combined_dt.timestamp()
+                
+                local_tz = datetime.datetime.now().astimezone().tzinfo
+                combined_dt_localized = combined_dt.replace(tzinfo=local_tz)
+                epoch_start_time = combined_dt_localized.timestamp()
+                
             except Exception as e:
                 st.error("❌ Invalid Format! Please enter the Date exactly as YYYY-MM-DD and Time as HH:MM.")
                 st.stop()
@@ -454,12 +457,10 @@ else:
     
     current_server_time = time.time()
 
-    # REQUIREMENT 3: BLANK WHITE SCREEN WITH THE OPENING TIME STRING IF EARLY
     if current_server_time < scheduled_start:
         st_autorefresh(interval=2000, key="empty_countdown_refresh")
         readable_target_time = datetime.datetime.fromtimestamp(scheduled_start).strftime('%Y-%m-%d %H:%M:%S')
         
-        # Injects HTML overlay creating a clean background displaying just the schedule string
         st.markdown(f"""
         <div class="empty-lock-screen">
             This exam will open at: {readable_target_time}
@@ -467,7 +468,6 @@ else:
         """, unsafe_allow_html=True)
         st.stop()
 
-    # BLOCK LATE LOGINS AFTER 5 MINUTES ENTRY WINDOW CLOSES
     if not st.session_state.auth and (current_server_time > (scheduled_start + 300)):
         st.title("❌ Access Expired")
         st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
@@ -569,6 +569,11 @@ else:
         if remaining == 0:
             process_and_submit_exam()
 
+        # FIXED RADIO HANDLER FOR CLOUD ENVIRONMENTS
+        # Define callback function to save responses automatically to session_state
+        def save_answer(q_idx):
+            st.session_state.answers[q_idx] = st.session_state[f"radio_q_{q_idx}"]
+
         for i, q in enumerate(qs):
             st.markdown(f'### Question {i+1}')
             st.write(q["q"])
@@ -576,17 +581,16 @@ else:
             saved_choice = st.session_state.answers.get(i, None)
             default_index = q["options"].index(saved_choice) if saved_choice in q["options"] else None
 
+            # Added the on_change callback parameter to keep things synchronized without explicit reruns
             chosen_option = st.radio(
                 label=f"Choose option for question {i+1}:",
                 options=q["options"],
                 index=default_index,
                 key=f"radio_q_{i}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                on_change=save_answer,
+                args=(i,)
             )
-
-            if chosen_option != saved_choice:
-                st.session_state.answers[i] = chosen_option
-                st.rerun()
                 
             st.write("---")
 
