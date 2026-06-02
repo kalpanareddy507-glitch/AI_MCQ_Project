@@ -179,12 +179,6 @@ if "auth" not in st.session_state:
 if "answers" not in st.session_state:
     st.session_state.answers = {}
 
-# INITIALIZE TIME SELECTION MEMORY
-if "manual_date_str" not in st.session_state:
-    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
-if "manual_time_str" not in st.session_state:
-    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
-
 base_url = get_base_url()
 
 # =========================================================
@@ -375,32 +369,21 @@ elif not exam_id and not review_mode:
     student_headcount = st.number_input("Manually Add Student Count", 1, 100, 3)
 
     st.write("---")
-    st.subheader("📅 Schedule Activation Configuration (Manual Entry)")
+    st.subheader("📅 Schedule Activation Configuration")
     col1, col2 = st.columns(2)
     
     with col1:
-        input_date = st.text_input("Enter Date (YYYY-MM-DD)", value=st.session_state.manual_date_str)
-        st.session_state.manual_date_str = input_date
+        chosen_date = st.date_input("Select Start Date", datetime.date.today())
     with col2:
-        input_time = st.text_input("Enter Start Time (HH:MM - 24Hr format)", value=st.session_state.manual_time_str)
-        st.session_state.manual_time_str = input_time
+        chosen_time = st.time_input("Select Start Time (24Hr format)", datetime.datetime.now().time())
 
     if st.button("Generate Secure Exam Suite", type="primary"):
         if not topic.strip():
             st.error("🚨 Enter the text! Topic Context field cannot be left blank.")
         else:
-            try:
-                parsed_date = datetime.datetime.strptime(st.session_state.manual_date_str.strip(), "%Y-%m-%d").date()
-                parsed_time = datetime.datetime.strptime(st.session_state.manual_time_str.strip(), "%H:%M").time()
-                combined_dt = datetime.datetime.combine(parsed_date, parsed_time)
-                
-                local_tz = datetime.datetime.now().astimezone().tzinfo
-                combined_dt_localized = combined_dt.replace(tzinfo=local_tz)
-                epoch_start_time = combined_dt_localized.timestamp()
-                
-            except Exception as e:
-                st.error("❌ Invalid Format! Please enter the Date exactly as YYYY-MM-DD and Time as HH:MM.")
-                st.stop()
+            # Native combination ensures correct system formatting directly to a standard timestamp
+            combined_dt = datetime.datetime.combine(chosen_date, chosen_time)
+            epoch_start_time = combined_dt.timestamp()
 
             qs = generate_questions(topic, int(num_q))
             exam = token(8)
@@ -457,6 +440,7 @@ else:
     
     current_server_time = time.time()
 
+    # If current time is less than the scheduled timestamp, display full screen block
     if current_server_time < scheduled_start:
         st_autorefresh(interval=1000, key="empty_countdown_refresh")
         readable_target_time = datetime.datetime.fromtimestamp(scheduled_start).strftime('%Y-%m-%d %H:%M:%S')
