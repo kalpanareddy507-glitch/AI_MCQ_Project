@@ -11,13 +11,29 @@ import re
 from streamlit_autorefresh import st_autorefresh
 
 # =========================================================
-# CONFIG
+# CONFIG & TIMEZONE FIX
 # =========================================================
 st.set_page_config(
     page_title="AI Exam Security Pipeline",
     page_icon="🔐",
     layout="centered"
 )
+
+try:
+    import zoneinfo
+    LOCAL_TZ = zoneinfo.ZoneInfo("Asia/Kolkata")  
+except ImportError:
+    class IST(datetime.tzinfo):
+        def utcoffset(self, dt): return datetime.timedelta(hours=5, minutes=30)
+        def tzname(self, dt): return "IST"
+        def dst(self, dt): return datetime.timedelta(0)
+    LOCAL_TZ = IST()
+
+def get_current_local_datetime():
+    return datetime.datetime.now(LOCAL_TZ)
+
+def get_current_local_epoch():
+    return get_current_local_datetime().timestamp()
 
 # =========================================================
 # CSS STYLE DEFINITIONS
@@ -36,6 +52,7 @@ div.stButton > button[kind="primary"] {
     padding: 15px;
     border-left: 5px solid #1e3a8a;
     border-radius: 6px;
+    margin-bottom: 15px;
 }
 .sheet-row {
     font-size: 18px !important;
@@ -47,7 +64,6 @@ div.stButton > button[kind="primary"] {
     display: flex;
     justify-content: space-between;
 }
-/* Style to create an entirely clean, empty interface when an exam is locked */
 .empty-lock-screen {
     position: fixed;
     top: 0; left: 0; width: 100vw; height: 100vh;
@@ -64,7 +80,7 @@ div.stButton > button[kind="primary"] {
 """, unsafe_allow_html=True)
 
 # =========================================================
-# DATABASE INTEGRATION (Updated Name to Avoid Prior Schema Version Conflicts)
+# DATABASE INTEGRATION
 # =========================================================
 conn = sqlite3.connect("exams_v3.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -158,7 +174,7 @@ def get_base_url():
         return "http://localhost:8501"
 
 # =========================================================
-# TRACK AND SANITIZE STATE MISMATCHES
+# STATE INITIALIZATION
 # =========================================================
 exam_id = st.query_params.get("exam_id")
 review_mode = st.query_params.get("review")
@@ -179,26 +195,18 @@ if "auth" not in st.session_state:
 if "answers" not in st.session_state:
     st.session_state.answers = {}
 
-# INITIALIZE TIME SELECTION MEMORY
-if "manual_date_str" not in st.session_state:
-    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
-if "manual_time_str" not in st.session_state:
-    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
-
 base_url = get_base_url()
 
 # =========================================================
-# ROUTE 1: HOST INDIVIDUAL RESULTS SHEET VIEW (&view=host)
+# RUNTIME ROUTES (ADMIN & SUBMISSIONS VIEWS)
 # =========================================================
 if review_mode and view_type == "host":
     if not is_admin:
-        st.error("🔒 Access Denied. This page is locked for Admin Eyes Only.")
+        st.error("🔒 Access Denied.")
         st.stop()
-
     st.title("📋 Admin Dashboard: Individual Student Results")
     cursor.execute("SELECT questions, points_per_question, password FROM exams WHERE exam_id=?", (review_mode,))
     exam_data = cursor.fetchone()
-    
     if not exam_data:
         st.error("Invalid Exam ID.")
         st.stop()
@@ -211,24 +219,12 @@ if review_mode and view_type == "host":
     cursor.execute("SELECT username, final_score FROM submissions WHERE exam_id=?", (review_mode,))
     submissions_dict = {row[0]: row[1] for row in cursor.fetchall()}
     
-    st.write("### All Registered Student Performance")
-    
     for student_username in sorted(passwords_matrix.keys()):
         if student_username in submissions_dict:
             score = submissions_dict[student_username]
-            st.markdown(f"""
-            <div class="sheet-row">
-                <div>Candidate Username: <strong>{student_username}</strong></div>
-                <div style="font-weight: bold; color: #1E3A8A;">{score} / {max_possible} Total Marks</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f'<div class="sheet-row"><div>Candidate Username: <strong>{student_username}</strong></div><div style="font-weight: bold; color: #1E3A8A;">{score} / {max_possible} Total Marks</div></div>', unsafe_allow_html=True)
         else:
-            st.markdown(f"""
-            <div class="sheet-row" style="border-left: 5px solid #EF4444; background-color: #FEF2F2;">
-                <div>Candidate Username: <strong>{student_username}</strong></div>
-                <div style="font-weight: bold; color: #EF4444; font-style: italic;">Absent / Not taking exam</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f'<div class="sheet-row" style="border-left: 5px solid #EF4444; background-color: #FEF2F2;"><div>Candidate Username: <strong>{student_username}</strong></div><div style="font-weight: bold; color: #EF4444; font-style: italic;">Absent / Not taking exam</div></div>', unsafe_allow_html=True)
         
     if st.button("Back to Control Router"):
         st.query_params.clear()
@@ -238,36 +234,19 @@ if review_mode and view_type == "host":
         st.rerun()
     st.stop()
 
-# =========================================================
-# ROUTE 2: SEPARATE RANKINGS LEADERBOARD VIEW (&view=ranks)
-# =========================================================
 elif review_mode and view_type == "ranks":
     if not is_admin:
-        st.error("🔒 Access Denied. This page is locked for Admin Eyes Only.")
+        st.error("🔒 Access Denied.")
         st.stop()
-
     st.title("🏆 Admin Dashboard: Student Leaderboard Ranks")
-    cursor.execute("""
-        SELECT username, final_score FROM submissions 
-        WHERE exam_id=? 
-        ORDER BY final_score DESC, submitted_at ASC
-    """, (review_mode,))
+    cursor.execute("SELECT username, final_score FROM submissions WHERE exam_id=? ORDER BY final_score DESC, submitted_at ASC", (review_mode,))
     leaderboard = cursor.fetchall()
-    
     if not leaderboard:
         st.info("No records completed yet.")
         st.stop()
         
     for idx, position in enumerate(leaderboard):
-        user_lbl = position[0]
-        val_score = position[1]
-        
-        st.markdown(f"""
-        <div class="sheet-row">
-            <div><strong>Rank #{idx+1}</strong> — <code>{user_lbl}</code></div>
-            <div style="font-weight: bold; color: #D97706;">Rank Position {idx+1} ({val_score} Marks)</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<div class="sheet-row"><div><strong>Rank #{idx+1}</strong> — <code>{position[0]}</code></div><div style="font-weight: bold; color: #D97706;">Score: {position[1]} Marks</div></div>', unsafe_allow_html=True)
         
     if st.button("Back to Control Router"):
         st.query_params.clear()
@@ -277,34 +256,25 @@ elif review_mode and view_type == "ranks":
         st.rerun()
     st.stop()
 
-# =========================================================
-# ROUTE 3: SEPARATE DIAGNOSTIC ANSWERS MATRIX (&view=answers)
-# =========================================================
 elif review_mode and view_type == "answers":
     if not is_admin:
-        st.error("🔒 Access Denied. This page is locked for Admin Eyes Only.")
+        st.error("🔒 Access Denied.")
         st.stop()
-
     st.title("🔍 Admin Dashboard: Student Answer Sheet Analytics")
     cursor.execute("SELECT questions, student_answers FROM exams WHERE exam_id=?", (review_mode,))
     exam_row = cursor.fetchone()
     qs = json.loads(exam_row[0])
-    
     all_students_answers = json.loads(exam_row[1]) if exam_row[1] else {}
-    
     if not all_students_answers:
         st.info("No answer analytics found.")
         st.stop()
         
-    selected_student = st.selectbox("Select Student Profile to View Answer Sheet:", list(all_students_answers.keys()))
-    
-    st.subheader(f"Detailed Answer Sheet for User: {selected_student}")
+    selected_student = st.selectbox("Select Student Profile:", list(all_students_answers.keys()))
     student_specific_answers = all_students_answers.get(selected_student, {})
     
     for i, q in enumerate(qs):
         user_choice = student_specific_answers.get(str(i))
         correct_choice = q["correct"]
-        
         if user_choice is None:
             status_text, status_color = "⚠️ Unanswered", "#64748b"
         elif user_choice == correct_choice:
@@ -312,12 +282,7 @@ elif review_mode and view_type == "answers":
         else:
             status_text, status_color = f"❌ Wrong Match (Selected: '{user_choice}' | Correct: '{correct_choice}')", "#B91C1C"
             
-        st.markdown(f"""
-        <div class="sheet-row">
-            <div><strong>Question {i+1} Evaluation</strong></div>
-            <div style="color: {status_color}; font-weight: bold;">{status_text}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<div class="sheet-row"><div><strong>Question {i+1}</strong></div><div style="color: {status_color}; font-weight: bold;">{status_text}</div></div>', unsafe_allow_html=True)
         
     if st.button("Back to Control Router"):
         st.query_params.clear()
@@ -327,44 +292,70 @@ elif review_mode and view_type == "answers":
         st.rerun()
     st.stop()
 
-# =========================================================
-# ROUTE 4: MASTER HUBS ROUTER PAGE SCREEN
-# =========================================================
 elif review_mode and view_type == "submitted":
+    cursor.execute("SELECT target_students, consumed FROM exams WHERE exam_id=?", (review_mode,))
+    exam_db_row = cursor.fetchone()
+    if not exam_db_row:
+        st.error("Exam entry data not found.")
+        st.stop()
+        
+    target_count = exam_db_row[0]
+    is_force_closed = exam_db_row[1] == 1
+    
+    cursor.execute("SELECT COUNT(*) FROM submissions WHERE exam_id=?", (review_mode,))
+    current_count = cursor.fetchone()[0]
+
+    all_completed = (current_count >= target_count) or is_force_closed
+
     if not is_admin:
         st.title("📝 Submission Complete")
         st.success("Thank you! Your exam has been successfully submitted.")
         st.stop()
             
-    if is_admin:
-        cursor.execute("SELECT target_students FROM exams WHERE exam_id=?", (review_mode,))
-        target_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM submissions WHERE exam_id=?", (review_mode,))
-        current_count = cursor.fetchone()[0]
-
-        st.title("⚡ Admin Control Center Panel Router")
-        st.write(f"**Progress Metrics:** {current_count} out of {target_count} students completed.")
-        
-        host_link = f"{base_url}/?review={review_mode}&view=host&admin=true"
-        ranks_link = f"{base_url}/?review={review_mode}&view=ranks&admin=true"
-        answers_link = f"{base_url}/?review={review_mode}&view=answers&admin=true"
-        
-        st.markdown(f"""
-        <div class="token-box">
-        🔹 <b>Individual Student Marks Layout:</b> <a href="{host_link}" target="_self">Open Scores Sheet</a><br><br>
-        🔹 <b>Isolated Rankings Board Layout:</b> <a href="{ranks_link}" target="_self">Open Ranks Sheet</a><br><br>
-        🔹 <b>Diagnostic Student Answer Sheets:</b> <a href="{answers_link}" target="_self">Open Individual Answer Sheets</a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("Clear Cycle & Restart App"):
-            st.query_params.clear()
-            st.session_state.clear()
+    st.title("⚡ Admin Control Center Panel Router")
+    
+    if not all_completed:
+        st.write(f"📈 **Active Progress:** {current_count} out of {target_count} students completed.")
+        st.write("---")
+        st.subheader("🚨 Exam Lifecycle Management")
+        st.info("If students are absent or cannot finish, click below to close the portal and lock the class scores out safely.")
+        if st.button("⛔ Force Close Exam Right Now (Handle Absentees)", type="primary"):
+            cursor.execute("UPDATE exams SET consumed=1 WHERE exam_id=?", (review_mode,))
+            conn.commit()
             st.rerun()
-        st.stop()
+
+    st.markdown("### 🛠️ Review Sheets Dashboards:")
+    
+    if st.button("📊 Open Individual Scores Sheet", use_container_width=True):
+        st.query_params.clear()
+        st.query_params["review"] = review_mode
+        st.query_params["view"] = "host"
+        st.query_params["admin"] = "true"
+        st.rerun()
+        
+    if st.button("🏆 Open Rankings Leaderboard Sheet", use_container_width=True):
+        st.query_params.clear()
+        st.query_params["review"] = review_mode
+        st.query_params["view"] = "ranks"
+        st.query_params["admin"] = "true"
+        st.rerun()
+        
+    if st.button("🔍 Open Individual Student Answer Sheets", use_container_width=True):
+        st.query_params.clear()
+        st.query_params["review"] = review_mode
+        st.query_params["view"] = "answers"
+        st.query_params["admin"] = "true"
+        st.rerun()
+        
+    st.write("---")
+    if st.button("♻️ Clear Cycle & Create New Exam", type="primary"):
+        st.query_params.clear()
+        st.session_state.clear()
+        st.rerun()
+    st.stop()
 
 # =========================================================
-# TEACHER PANEL
+# ROUTE 5: TEACHER CREATION PANEL
 # =========================================================
 elif not exam_id and not review_mode:
     st.title("🎓 AI MCQ Generator (Admin Panel)")
@@ -375,29 +366,27 @@ elif not exam_id and not review_mode:
     student_headcount = st.number_input("Manually Add Student Count", 1, 100, 3)
 
     st.write("---")
-    st.subheader("📅 Schedule Activation Configuration (Manual Entry)")
-    col1, col2 = st.columns(2)
+    st.subheader("📅 Schedule Activation Configuration (Local Time)")
     
+    if "admin_chosen_date" not in st.session_state or "admin_chosen_time" not in st.session_state:
+        current_local = get_current_local_datetime()
+        buffered_local = current_local + datetime.timedelta(minutes=5)
+        st.session_state.admin_chosen_date = buffered_local.date()
+        st.session_state.admin_chosen_time = buffered_local.time()
+    
+    col1, col2 = st.columns(2)
     with col1:
-        input_date = st.text_input("Enter Date (YYYY-MM-DD)", value=st.session_state.manual_date_str)
-        st.session_state.manual_date_str = input_date
+        chosen_date = st.date_input("Select Start Date", key="admin_chosen_date")
     with col2:
-        input_time = st.text_input("Enter Start Time (HH:MM - 24Hr format)", value=st.session_state.manual_time_str)
-        st.session_state.manual_time_str = input_time
+        chosen_time = st.time_input("Select Start Time (24Hr format)", key="admin_chosen_time")
 
     if st.button("Generate Secure Exam Suite", type="primary"):
         if not topic.strip():
             st.error("🚨 Enter the text! Topic Context field cannot be left blank.")
         else:
-            # Parse custom strings into exact timestamps
-            try:
-                parsed_date = datetime.datetime.strptime(st.session_state.manual_date_str.strip(), "%Y-%m-%d").date()
-                parsed_time = datetime.datetime.strptime(st.session_state.manual_time_str.strip(), "%H:%M").time()
-                combined_dt = datetime.datetime.combine(parsed_date, parsed_time)
-                epoch_start_time = combined_dt.timestamp()
-            except Exception as e:
-                st.error("❌ Invalid Format! Please enter the Date exactly as YYYY-MM-DD and Time as HH:MM.")
-                st.stop()
+            combined_naive = datetime.datetime.combine(chosen_date, chosen_time)
+            combined_localized = combined_naive.replace(tzinfo=LOCAL_TZ)
+            epoch_start_time = combined_localized.timestamp()
 
             qs = generate_questions(topic, int(num_q))
             exam = token(8)
@@ -407,23 +396,26 @@ elif not exam_id and not review_mode:
                 generated_username = f"CANDIDATE_{idx}"
                 passwords_matrix[generated_username] = f"PASS_{token(4)}"
                 
-            now = time.time()
+            now_epoch = get_current_local_epoch()
 
             cursor.execute("""
             INSERT INTO exams (exam_id, username, password, questions, created_at, expires_at, consumed, exam_duration, student_answers, target_students, points_per_question, scheduled_start) 
             VALUES (?,?,?,?,?,?,?,?, ?, ?, ?, ?)
-            """, (exam, "MULTI_STUDENT", json.dumps(passwords_matrix), json.dumps(qs), now, now + 3600*2, 0, int(num_q)*45, json.dumps({}), int(student_headcount), float(fixed_score_weight), epoch_start_time))
+            """, (exam, "MULTI_STUDENT", json.dumps(passwords_matrix), json.dumps(qs), now_epoch, now_epoch + 7200, 0, int(num_q)*45, json.dumps({}), int(student_headcount), float(fixed_score_weight), epoch_start_time))
             conn.commit()
 
             student_link = f"{base_url}/?exam_id={exam}"
             st.session_state.admin_exam_target = exam
             st.query_params.clear()
 
+            if "admin_chosen_date" in st.session_state: del st.session_state.admin_chosen_date
+            if "admin_chosen_time" in st.session_state: del st.session_state.admin_chosen_time
+
             st.success(f"Exam Suite Generated Successfully!")
             st.markdown(f"""
             <div class="token-box">
             <b>Shared Testing URL for Students:</b> <code>{student_link}</code><br>
-            📅 Scheduled To Open: <code>{combined_dt.strftime('%Y-%m-%d %H:%M:%S')}</code>
+            📅 Scheduled To Open (Your Local Time): <code>{combined_localized.strftime('%Y-%m-%d %H:%M:%S')}</code>
             </div>
             """, unsafe_allow_html=True)
 
@@ -439,27 +431,29 @@ elif not exam_id and not review_mode:
             st.rerun()
 
 # =========================================================
-# STUDENT SECURE PORTAL ENTRY MAPPINGS
+# ROUTE 6: STUDENT SECURE PORTAL
 # =========================================================
 else:
     cursor.execute("SELECT exam_id, username, password, questions, created_at, expires_at, consumed, exam_duration, student_answers, target_students, points_per_question, scheduled_start FROM exams WHERE exam_id=?", (exam_id,))
     data = cursor.fetchone()
 
+    # FIX: Safety Fallback routing to prevent parameters blank screen flashing 
     if not data:
-        st.error("Invalid verification parameters.")
-        st.stop()
+        st.query_params.clear()
+        st.query_params["review"] = exam_id
+        st.query_params["view"] = "submitted"
+        st.rerun()
 
     (eid, group_name, password_matrix_json, qs_json, created, expires, consumed, duration, raw_answers, target_students, points_per_question, scheduled_start) = data
     passwords_matrix = json.loads(password_matrix_json)
     
-    current_server_time = time.time()
+    current_local_epoch = get_current_local_epoch()
 
-    # REQUIREMENT 3: BLANK WHITE SCREEN WITH THE OPENING TIME STRING IF EARLY
-    if current_server_time < scheduled_start:
+    # LOCK SCREEN CHECK
+    if current_local_epoch < scheduled_start:
         st_autorefresh(interval=2000, key="empty_countdown_refresh")
-        readable_target_time = datetime.datetime.fromtimestamp(scheduled_start).strftime('%Y-%m-%d %H:%M:%S')
         
-        # Injects HTML overlay creating a clean background displaying just the schedule string
+        readable_target_time = datetime.datetime.fromtimestamp(scheduled_start, LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
         st.markdown(f"""
         <div class="empty-lock-screen">
             This exam will open at: {readable_target_time}
@@ -467,10 +461,14 @@ else:
         """, unsafe_allow_html=True)
         st.stop()
 
-    # BLOCK LATE LOGINS AFTER 5 MINUTES ENTRY WINDOW CLOSES
-    if not st.session_state.auth and (current_server_time > (scheduled_start + 300)):
+    if consumed == 1:
+        st.title("❌ Session Terminated")
+        st.error("The admin has closed this testing session. No further entries are allowed.")
+        st.stop()
+
+    if not st.session_state.auth and (current_local_epoch > (scheduled_start + 10800)):
         st.title("❌ Access Expired")
-        st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
+        st.error("The entrance window for this exam session has expired.")
         st.stop()
 
     cursor.execute("SELECT username FROM submissions WHERE exam_id=?", (exam_id,))
@@ -478,7 +476,6 @@ else:
 
     if not st.session_state.auth:
         st.title("🔐 Secure Access Environment")
-        
         available_options = [user for user in passwords_matrix.keys() if user not in completed_usernames]
         
         if not available_options:
@@ -508,16 +505,12 @@ else:
                     if p.strip() != active_password:
                         st.error("Access Control Warning: Password must match the selected username's passcode.")
                     else:
-                        cursor.execute("SELECT COUNT(*) FROM submissions WHERE exam_id=? AND username=?", (exam_id, selected_user))
-                        if cursor.fetchone()[0] > 0:
-                            st.error("This student username has already logged in or completed this evaluation session!")
-                        else:
-                            st.session_state.auth = True
-                            st.session_state.current_candidate_user = selected_user
-                            st.session_state.questions = json.loads(qs_json)
-                            st.session_state.start = time.time()
-                            st.session_state.duration = duration
-                            st.rerun()
+                        st.session_state.auth = True
+                        st.session_state.current_candidate_user = selected_user
+                        st.session_state.questions = json.loads(qs_json)
+                        st.session_state.start = get_current_local_epoch()
+                        st.session_state.duration = duration
+                        st.rerun()
         else:
             st.info("Please expand the dropdown selector above to verify your account seating.")
     else:
@@ -525,12 +518,13 @@ else:
         st_autorefresh(interval=1000, key="exam")
 
         qs = st.session_state.questions
-        elapsed = time.time() - st.session_state.start
+        elapsed = get_current_local_epoch() - st.session_state.start
         remaining = max(0, int(st.session_state.duration - elapsed))
 
         m, s = divmod(remaining, 60)
         st.warning(f"Time remaining: {m:02d}:{s:02d}")
 
+        # FIX: Re-designed submission data handler to capture selections using fallback dictionary check to prevent KeyError 
         def process_and_submit_exam():
             cursor.execute("SELECT student_answers FROM exams WHERE exam_id=?", (exam_id,))
             existing_answers_raw = cursor.fetchone()[0]
@@ -538,18 +532,20 @@ else:
             
             student_profile_name = st.session_state.current_candidate_user
             master_answers_dict[student_profile_name] = {}
-            
-            for k, v in st.session_state.answers.items():
-                master_answers_dict[student_profile_name][str(k)] = v
+            for k in range(len(qs)):
+                radio_key = f"radio_q_{k}"
+                # Safe look up: Check state dictionary, otherwise fall back on loaded memory state tracking
+                val = st.session_state.get(radio_key, st.session_state.answers.get(k))
+                if val is not None:
+                    master_answers_dict[student_profile_name][str(k)] = val
                 
             cursor.execute("UPDATE exams SET student_answers=? WHERE exam_id=?", (json.dumps(master_answers_dict), exam_id))
             
             final_calculated_score = 0.0
             for index, question in enumerate(qs):
-                student_choice = st.session_state.answers.get(index)
-                correct_choice = question["correct"]
-                
-                if student_choice == correct_choice:
+                radio_key = f"radio_q_{index}"
+                student_choice = st.session_state.get(radio_key, st.session_state.answers.get(index))
+                if student_choice == question["correct"]:
                     final_calculated_score += points_per_question
                 elif student_choice is not None:
                     final_calculated_score -= 1.0
@@ -557,17 +553,23 @@ else:
             cursor.execute("""
                 INSERT INTO submissions (exam_id, username, final_score, submitted_at)
                 VALUES (?, ?, ?, ?)
-            """, (exam_id, student_profile_name, final_calculated_score, time.time()))
+            """, (exam_id, student_profile_name, final_calculated_score, get_current_local_epoch()))
             conn.commit()
             
-            st.session_state.clear()
             st.query_params.clear()
             st.query_params["review"] = exam_id
             st.query_params["view"] = "submitted"
+            st.session_state.auth = False
             st.rerun()
 
         if remaining == 0:
             process_and_submit_exam()
+
+        # FIX: Safe key state lookups prevent KeyError execution tracking failures
+        def save_answer(q_idx):
+            radio_key = f"radio_q_{q_idx}"
+            if radio_key in st.session_state:
+                st.session_state.answers[q_idx] = st.session_state[radio_key]
 
         for i, q in enumerate(qs):
             st.markdown(f'### Question {i+1}')
@@ -576,18 +578,15 @@ else:
             saved_choice = st.session_state.answers.get(i, None)
             default_index = q["options"].index(saved_choice) if saved_choice in q["options"] else None
 
-            chosen_option = st.radio(
+            st.radio(
                 label=f"Choose option for question {i+1}:",
                 options=q["options"],
                 index=default_index,
                 key=f"radio_q_{i}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                on_change=save_answer,
+                args=(i,)
             )
-
-            if chosen_option != saved_choice:
-                st.session_state.answers[i] = chosen_option
-                st.rerun()
-                
             st.write("---")
 
         if st.button("Finalize and Submit", type="primary"):
