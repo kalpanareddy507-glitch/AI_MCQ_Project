@@ -19,7 +19,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# Explicitly bind to Indian Standard Time (IST) to match your desktop system
 try:
     import zoneinfo
     LOCAL_TZ = zoneinfo.ZoneInfo("Asia/Kolkata")  
@@ -31,11 +30,9 @@ except ImportError:
     LOCAL_TZ = IST()
 
 def get_current_local_datetime():
-    """Returns a datetime object set perfectly to your local time."""
     return datetime.datetime.now(LOCAL_TZ)
 
 def get_current_local_epoch():
-    """Returns the current epoch timestamp relative to your local time."""
     return get_current_local_datetime().timestamp()
 
 # =========================================================
@@ -340,7 +337,6 @@ elif not exam_id and not review_mode:
     st.write("---")
     st.subheader("📅 Schedule Activation Configuration (Local Time)")
     
-    # CRITICAL FIX: Initialize session state keys for the widgets if they don't exist yet
     if "admin_chosen_date" not in st.session_state or "admin_chosen_time" not in st.session_state:
         current_local = get_current_local_datetime()
         buffered_local = current_local + datetime.timedelta(minutes=5)
@@ -349,10 +345,8 @@ elif not exam_id and not review_mode:
     
     col1, col2 = st.columns(2)
     with col1:
-        # Binding directly to key="admin_chosen_date" saves user alterations automatically
         chosen_date = st.date_input("Select Start Date", key="admin_chosen_date")
     with col2:
-        # Binding directly to key="admin_chosen_time" saves dropdown picker choices perfectly
         chosen_time = st.time_input("Select Start Time (24Hr format)", key="admin_chosen_time")
 
     if st.button("Generate Secure Exam Suite", type="primary"):
@@ -383,7 +377,6 @@ elif not exam_id and not review_mode:
             st.session_state.admin_exam_target = exam
             st.query_params.clear()
 
-            # Clean up the creation widget variables from state so next load recreates standard defaults
             if "admin_chosen_date" in st.session_state: del st.session_state.admin_chosen_date
             if "admin_chosen_time" in st.session_state: del st.session_state.admin_chosen_time
 
@@ -518,17 +511,21 @@ else:
             """, (exam_id, student_profile_name, final_calculated_score, get_current_local_epoch()))
             conn.commit()
             
-            st.session_state.clear()
+            # CRITICAL FIX: Safe session clearing without breaking ongoing widget hooks
             st.query_params.clear()
             st.query_params["review"] = exam_id
             st.query_params["view"] = "submitted"
+            st.session_state.auth = False
             st.rerun()
 
         if remaining == 0:
             process_and_submit_exam()
 
+        # CRITICAL FIX: Safely read from session state instead of crashing with a KeyError
         def save_answer(q_idx):
-            st.session_state.answers[q_idx] = st.session_state[f"radio_q_{q_idx}"]
+            radio_key = f"radio_q_{q_idx}"
+            if radio_key in st.session_state:
+                st.session_state.answers[q_idx] = st.session_state[radio_key]
 
         for i, q in enumerate(qs):
             st.markdown(f'### Question {i+1}')
