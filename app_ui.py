@@ -61,7 +61,6 @@ div.stButton > button[kind="primary"] {
     padding: 15px;
     border-left: 5px solid #1e3a8a;
     border-radius: 6px;
-    margin-bottom: 20px;
 }
 .sheet-row {
     font-size: 18px !important;
@@ -355,32 +354,19 @@ elif review_mode and view_type == "submitted":
         st.title("⚡ Admin Control Center Panel Router")
         st.write(f"**Progress Metrics:** {current_count} out of {target_count} students completed.")
         
-        # FIX: Replaced broken HTML link injection with error-free Streamlit native buttons
-        st.markdown('<div class="token-box">🛠️ <b>Select an administrative view layout below to navigate instantly:</b></div>', unsafe_allow_html=True)
+        host_link = f"{base_url}/?review={review_mode}&view=host&admin=true"
+        ranks_link = f"{base_url}/?review={review_mode}&view=ranks&admin=true"
+        answers_link = f"{base_url}/?review={review_mode}&view=answers&admin=true"
         
-        if st.button("📊 Open Individual Student Scores Sheet", use_container_width=True):
-            st.query_params.clear()
-            st.query_params["review"] = review_mode
-            st.query_params["view"] = "host"
-            st.query_params["admin"] = "true"
-            st.rerun()
-            
-        if st.button("🏆 Open Isolated Ranks Leaderboard", use_container_width=True):
-            st.query_params.clear()
-            st.query_params["review"] = review_mode
-            st.query_params["view"] = "ranks"
-            st.query_params["admin"] = "true"
-            st.rerun()
-            
-        if st.button("🔍 Open Detailed Answer Sheet Analytics", use_container_width=True):
-            st.query_params.clear()
-            st.query_params["review"] = review_mode
-            st.query_params["view"] = "answers"
-            st.query_params["admin"] = "true"
-            st.rerun()
-            
-        st.write("---")
-        if st.button("🔄 Clear Cycle & Restart App Entirely", type="primary"):
+        st.markdown(f"""
+        <div class="token-box">
+        🔹 <b>Individual Student Marks Layout:</b> <a href="{host_link}" target="_self">Open Scores Sheet</a><br><br>
+        🔹 <b>Isolated Rankings Board Layout:</b> <a href="{ranks_link}" target="_self">Open Ranks Sheet</a><br><br>
+        🔹 <b>Diagnostic Student Answer Sheets:</b> <a href="{answers_link}" target="_self">Open Individual Answer Sheets</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("Clear Cycle & Restart App"):
             st.query_params.clear()
             st.session_state.clear()
             st.rerun()
