@@ -1,0 +1,31 @@
+name: Zero-Code Database Migration to Supabase
+
+on:
+  push:
+    paths:
+      - 'exams_v3.db' # Triggers automatically when your database file updates
+  workflow_dispatch: # Allows you to trigger the migration manually with a button click
+
+jobs:
+  sync-to-supabase:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-python: '3.10'
+
+    - name: Install DB Translation Dependencies
+      run: |
+        pip install sqlite3to-postgres
+
+    - name: Stream Data into Supabase
+      env:
+        TARGET_URL: ${{ secrets.SUPABASE_DB_URL }}
+      run: |
+        # This translates the SQLite file format over the network to Supabase Postgres rows instantly
+        sqlite3to-postgres --sqlite-path ./exams_v3.db --postgres-uri "$TARGET_URL"

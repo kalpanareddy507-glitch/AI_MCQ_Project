@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: mcq_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mcq_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mcq_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mcq_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mcq_redis_broker
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - mcq_network
+
+  api:
+    build: .
+    container_name: mcq_fastapi_api
+    restart: always
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/mcq_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - mcq_network
+
+  worker:
+    build: .
+    container_name: mcq_celery_worker
+    restart: always
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=1
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/mcq_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - mcq_network
+
+  frontend:
+    build: .
+    ports:
+      - "8501:8501"
+    command: sh -c "pip install streamlit && streamlit run app_ui.py --server.address 0.0.0.0"
+    volumes:
+      - .:/app
+    depends_on:
+      - api
+    networks:
+      - mcq_network
+
+volumes:
+  postgres_data:
+
+networks:
+  mcq_network:
+    driver: bridge
