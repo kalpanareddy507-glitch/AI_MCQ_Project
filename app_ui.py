@@ -340,20 +340,20 @@ elif not exam_id and not review_mode:
     st.write("---")
     st.subheader("📅 Schedule Activation Configuration (Local Time)")
     
-    # Grab user-specific timezone data to pre-populate inputs dynamically
+    # FIX: Add a 5-minute safety buffer into the dynamic visual configuration so it never initializes expired
     current_local = get_current_local_datetime()
+    buffered_local = current_local + datetime.timedelta(minutes=5)
     
     col1, col2 = st.columns(2)
     with col1:
-        chosen_date = st.date_input("Select Start Date", current_local.date())
+        chosen_date = st.date_input("Select Start Date", buffered_local.date())
     with col2:
-        chosen_time = st.time_input("Select Start Time (24Hr format)", current_local.time())
+        chosen_time = st.time_input("Select Start Time (24Hr format)", buffered_local.time())
 
     if st.button("Generate Secure Exam Suite", type="primary"):
         if not topic.strip():
             st.error("🚨 Enter the text! Topic Context field cannot be left blank.")
         else:
-            # Combine calendar inputs and forcefully localize to avoid server timezone skew
             combined_naive = datetime.datetime.combine(chosen_date, chosen_time)
             combined_localized = combined_naive.replace(tzinfo=LOCAL_TZ)
             epoch_start_time = combined_localized.timestamp()
@@ -411,7 +411,6 @@ else:
     (eid, group_name, password_matrix_json, qs_json, created, expires, consumed, duration, raw_answers, target_students, points_per_question, scheduled_start) = data
     passwords_matrix = json.loads(password_matrix_json)
     
-    # CRITICAL FIX: Evaluate current time matching your local timezone epoch structure
     current_local_epoch = get_current_local_epoch()
 
     # LOCK SCREEN CHECK
@@ -426,10 +425,10 @@ else:
         """, unsafe_allow_html=True)
         st.stop()
 
-    # Grace window checking logic (5 minutes)
-    if not st.session_state.auth and (current_local_epoch > (scheduled_start + 300)):
+    # FIX: Expanded absolute entry lock buffer window to 3 hours (10800 seconds) so old execution setups don't immediately lock students out.
+    if not st.session_state.auth and (current_local_epoch > (scheduled_start + 10800)):
         st.title("❌ Access Expired")
-        st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
+        st.error("The entrance window for this exam session has expired.")
         st.stop()
 
     cursor.execute("SELECT username FROM submissions WHERE exam_id=?", (exam_id,))
