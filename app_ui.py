@@ -295,13 +295,16 @@ elif review_mode and view_type == "answers":
 elif review_mode and view_type == "submitted":
     cursor.execute("SELECT target_students, consumed FROM exams WHERE exam_id=?", (review_mode,))
     exam_db_row = cursor.fetchone()
+    if not exam_db_row:
+        st.error("Exam entry data not found.")
+        st.stop()
+        
     target_count = exam_db_row[0]
     is_force_closed = exam_db_row[1] == 1
     
     cursor.execute("SELECT COUNT(*) FROM submissions WHERE exam_id=?", (review_mode,))
     current_count = cursor.fetchone()[0]
 
-    # Check if everyone submitted naturally or if the admin closed it manually
     all_completed = (current_count >= target_count) or is_force_closed
 
     if not is_admin:
@@ -311,7 +314,6 @@ elif review_mode and view_type == "submitted":
             
     st.title("⚡ Admin Control Center Panel Router")
     
-    # FIX: Hide the raw submission math tracker once the exam process is marked as finished or forced closed
     if not all_completed:
         st.write(f"📈 **Active Progress:** {current_count} out of {target_count} students completed.")
         st.write("---")
@@ -435,9 +437,12 @@ else:
     cursor.execute("SELECT exam_id, username, password, questions, created_at, expires_at, consumed, exam_duration, student_answers, target_students, points_per_question, scheduled_start FROM exams WHERE exam_id=?", (exam_id,))
     data = cursor.fetchone()
 
+    # FIX: Safety Fallback routing to prevent parameters blank screen flashing 
     if not data:
-        st.error("Invalid verification parameters.")
-        st.stop()
+        st.query_params.clear()
+        st.query_params["review"] = exam_id
+        st.query_params["view"] = "submitted"
+        st.rerun()
 
     (eid, group_name, password_matrix_json, qs_json, created, expires, consumed, duration, raw_answers, target_students, points_per_question, scheduled_start) = data
     passwords_matrix = json.loads(password_matrix_json)
@@ -456,7 +461,6 @@ else:
         """, unsafe_allow_html=True)
         st.stop()
 
-    # FIX: Block access instantly if the teacher manually activated force closure mode
     if consumed == 1:
         st.title("❌ Session Terminated")
         st.error("The admin has closed this testing session. No further entries are allowed.")
@@ -474,7 +478,6 @@ else:
         st.title("🔐 Secure Access Environment")
         available_options = [user for user in passwords_matrix.keys() if user not in completed_usernames]
         
-        # FIX: End the session if all active/non-absent students have cleared it out completely
         if not available_options:
             st.title("📝 Session Complete")
             st.success("Thank you! Your exam has been successfully submitted.")
@@ -521,6 +524,7 @@ else:
         m, s = divmod(remaining, 60)
         st.warning(f"Time remaining: {m:02d}:{s:02d}")
 
+        # FIX: Re-designed submission data handler to capture selections using fallback dictionary check to prevent KeyError 
         def process_and_submit_exam():
             cursor.execute("SELECT student_answers FROM exams WHERE exam_id=?", (exam_id,))
             existing_answers_raw = cursor.fetchone()[0]
@@ -528,14 +532,19 @@ else:
             
             student_profile_name = st.session_state.current_candidate_user
             master_answers_dict[student_profile_name] = {}
-            for k, v in st.session_state.answers.items():
-                master_answers_dict[student_profile_name][str(k)] = v
+            for k in range(len(qs)):
+                radio_key = f"radio_q_{k}"
+                # Safe look up: Check state dictionary, otherwise fall back on loaded memory state tracking
+                val = st.session_state.get(radio_key, st.session_state.answers.get(k))
+                if val is not None:
+                    master_answers_dict[student_profile_name][str(k)] = val
                 
             cursor.execute("UPDATE exams SET student_answers=? WHERE exam_id=?", (json.dumps(master_answers_dict), exam_id))
             
             final_calculated_score = 0.0
             for index, question in enumerate(qs):
-                student_choice = st.session_state.answers.get(index)
+                radio_key = f"radio_q_{index}"
+                student_choice = st.session_state.get(radio_key, st.session_state.answers.get(index))
                 if student_choice == question["correct"]:
                     final_calculated_score += points_per_question
                 elif student_choice is not None:
@@ -556,6 +565,7 @@ else:
         if remaining == 0:
             process_and_submit_exam()
 
+        # FIX: Safe key state lookups prevent KeyError execution tracking failures
         def save_answer(q_idx):
             radio_key = f"radio_q_{q_idx}"
             if radio_key in st.session_state:
