@@ -19,7 +19,8 @@ st.set_page_config(
     layout="centered"
 )
 
-# Initialize all required global state keys safely at root execution
+# Crucial Fix: Initialize ALL required session state variables 
+# globally at root execution to completely block any AttributeError forks.
 if "admin_exam_target" not in st.session_state:
     st.session_state.admin_exam_target = None
 if "auth" not in st.session_state:
@@ -38,6 +39,8 @@ if "start" not in st.session_state:
     st.session_state.start = None
 if "duration" not in st.session_state:
     st.session_state.duration = 0
+if "current_tracking_id" not in st.session_state:
+    st.session_state.current_tracking_id = None
 
 # Initialize Supabase Database Connection
 conn = st.connection("postgresql", type="sql")
@@ -61,6 +64,7 @@ div.stButton > button[kind="primary"] {
     padding: 15px;
     border-left: 5px solid #1e3a8a;
     border-radius: 6px;
+    margin-bottom: 20px;
 }
 .sheet-row {
     font-size: 18px !important;
@@ -72,7 +76,6 @@ div.stButton > button[kind="primary"] {
     display: flex;
     justify-content: space-between;
 }
-/* Style to create an entirely clean, empty interface when an exam is locked */
 .empty-lock-screen {
     position: fixed;
     top: 0; left: 0; width: 100vw; height: 100vh;
@@ -156,14 +159,21 @@ review_mode = st.query_params.get("review")
 view_type = st.query_params.get("view") 
 is_admin = st.query_params.get("admin") == "true"
 
-if "current_tracking_id" not in st.session_state:
-    st.session_state.current_tracking_id = exam_id or review_mode
-else:
-    active_id = exam_id or review_mode
-    if st.session_state.current_tracking_id != active_id:
-        st.session_state.clear()
-        st.session_state.current_tracking_id = active_id
-        st.rerun()
+active_id = exam_id or review_mode
+if st.session_state.current_tracking_id != active_id:
+    st.session_state.clear()
+    # Reinitialize root globals cleanly after a clear reset
+    st.session_state.current_tracking_id = active_id
+    st.session_state.admin_exam_target = None
+    st.session_state.auth = False
+    st.session_state.answers = {}
+    st.session_state.manual_date_str = datetime.date.today().strftime("%Y-%m-%d")
+    st.session_state.manual_time_str = datetime.datetime.now().strftime("%H:%M")
+    st.session_state.current_candidate_user = None
+    st.session_state.questions = []
+    st.session_state.start = None
+    st.session_state.duration = 0
+    st.rerun()
 
 base_url = get_base_url()
 
@@ -184,7 +194,7 @@ if review_mode and view_type == "host":
     )
     
     if exam_df.empty:
-        st.error("Invalid Exam ID.")
+        st.error("Invalid Exam ID context.")
         st.stop()
         
     exam_data = exam_df.iloc[0]
@@ -333,7 +343,7 @@ elif review_mode and view_type == "answers":
 elif review_mode and view_type == "submitted":
     if not is_admin:
         st.title("📝 Submission Complete")
-        st.success("Thank you! Your exam has been successfully submitted.")
+        st.success("Thank you! Your evaluation framework answers are recorded.")
         st.stop()
             
     if is_admin:
@@ -354,19 +364,32 @@ elif review_mode and view_type == "submitted":
         st.title("⚡ Admin Control Center Panel Router")
         st.write(f"**Progress Metrics:** {current_count} out of {target_count} students completed.")
         
-        host_link = f"{base_url}/?review={review_mode}&view=host&admin=true"
-        ranks_link = f"{base_url}/?review={review_mode}&view=ranks&admin=true"
-        answers_link = f"{base_url}/?review={review_mode}&view=answers&admin=true"
+        st.markdown('<div class="token-box">🛠️ <b>Select an administrative view layout below to navigate instantly:</b></div>', unsafe_allow_html=True)
         
-        st.markdown(f"""
-        <div class="token-box">
-        🔹 <b>Individual Student Marks Layout:</b> <a href="{host_link}" target="_self">Open Scores Sheet</a><br><br>
-        🔹 <b>Isolated Rankings Board Layout:</b> <a href="{ranks_link}" target="_self">Open Ranks Sheet</a><br><br>
-        🔹 <b>Diagnostic Student Answer Sheets:</b> <a href="{answers_link}" target="_self">Open Individual Answer Sheets</a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("Clear Cycle & Restart App"):
+        # Native safe UI buttons instead of raw iframe links
+        if st.button("📊 Open Individual Student Scores Sheet", use_container_width=True):
+            st.query_params.clear()
+            st.query_params["review"] = review_mode
+            st.query_params["view"] = "host"
+            st.query_params["admin"] = "true"
+            st.rerun()
+            
+        if st.button("🏆 Open Isolated Ranks Leaderboard", use_container_width=True):
+            st.query_params.clear()
+            st.query_params["review"] = review_mode
+            st.query_params["view"] = "ranks"
+            st.query_params["admin"] = "true"
+            st.rerun()
+            
+        if st.button("🔍 Open Detailed Answer Sheet Analytics", use_container_width=True):
+            st.query_params.clear()
+            st.query_params["review"] = review_mode
+            st.query_params["view"] = "answers"
+            st.query_params["admin"] = "true"
+            st.rerun()
+            
+        st.write("---")
+        if st.button("🔄 Clear Cycle & Restart App Entirely", type="primary"):
             st.query_params.clear()
             st.session_state.clear()
             st.rerun()
@@ -484,7 +507,7 @@ else:
     )
 
     if df_exam.empty:
-        st.error("Invalid verification parameters.")
+        st.error("Invalid verification query parameters setup.")
         st.stop()
 
     data_row = df_exam.iloc[0]
@@ -516,7 +539,7 @@ else:
 
     if not st.session_state.auth and (current_server_time > (scheduled_start + 300)):
         st.title("❌ Access Expired")
-        st.error("The entrance window for this exam closed 5 minutes after the scheduled start time. You are marked as absent.")
+        st.error("The entrance window for this exam closed 5 minutes after the scheduled start time.")
         st.stop()
 
     sub_users_df = conn.query(
@@ -533,7 +556,7 @@ else:
         
         if not available_options:
             st.title("📝 Session Complete")
-            st.success("Thank you! Your exam has been successfully submitted.")
+            st.success("Thank you! All student iterations submitted completely.")
             st.stop()
             
         st.write("Select your Username from the dropdown menu to see your matching password:")
@@ -556,7 +579,7 @@ else:
 
                 if ok:
                     if p.strip() != active_password:
-                        st.error("Access Control Warning: Password must match the selected username's passcode.")
+                        st.error("Access Control Warning: Password must match passcode layout.")
                     else:
                         check_sub = conn.query(
                             "SELECT COUNT(*) as count FROM submissions WHERE exam_id = :exam_id AND username = :user;", 
@@ -564,7 +587,7 @@ else:
                             ttl=0
                         )
                         if check_sub.iloc[0]["count"] > 0:
-                            st.error("This student username has already logged in or completed this evaluation session!")
+                            st.error("This candidate profile session has already been completed!")
                         else:
                             st.session_state.auth = True
                             st.session_state.current_candidate_user = selected_user
