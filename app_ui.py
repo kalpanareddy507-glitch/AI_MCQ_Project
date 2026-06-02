@@ -293,21 +293,35 @@ elif review_mode and view_type == "answers":
     st.stop()
 
 elif review_mode and view_type == "submitted":
-    cursor.execute("SELECT target_students FROM exams WHERE exam_id=?", (review_mode,))
-    target_count = cursor.fetchone()[0]
+    cursor.execute("SELECT target_students, consumed FROM exams WHERE exam_id=?", (review_mode,))
+    exam_db_row = cursor.fetchone()
+    target_count = exam_db_row[0]
+    is_force_closed = exam_db_row[1] == 1
+    
     cursor.execute("SELECT COUNT(*) FROM submissions WHERE exam_id=?", (review_mode,))
     current_count = cursor.fetchone()[0]
+
+    # Check if everyone submitted naturally or if the admin closed it manually
+    all_completed = (current_count >= target_count) or is_force_closed
 
     if not is_admin:
         st.title("📝 Submission Complete")
         st.success("Thank you! Your exam has been successfully submitted.")
-        st.write(f"📊 Current Submission Progress: {current_count} out of {target_count} students completed.")
         st.stop()
             
     st.title("⚡ Admin Control Center Panel Router")
-    st.write(f"**Progress Metrics:** {current_count} out of {target_count} students completed.")
     
-    # FIX: Native Streamlit button layout system to perform error-free routing instead of broken hyperlinks
+    # FIX: Hide the raw submission math tracker once the exam process is marked as finished or forced closed
+    if not all_completed:
+        st.write(f"📈 **Active Progress:** {current_count} out of {target_count} students completed.")
+        st.write("---")
+        st.subheader("🚨 Exam Lifecycle Management")
+        st.info("If students are absent or cannot finish, click below to close the portal and lock the class scores out safely.")
+        if st.button("⛔ Force Close Exam Right Now (Handle Absentees)", type="primary"):
+            cursor.execute("UPDATE exams SET consumed=1 WHERE exam_id=?", (review_mode,))
+            conn.commit()
+            st.rerun()
+
     st.markdown("### 🛠️ Review Sheets Dashboards:")
     
     if st.button("📊 Open Individual Scores Sheet", use_container_width=True):
@@ -442,6 +456,12 @@ else:
         """, unsafe_allow_html=True)
         st.stop()
 
+    # FIX: Block access instantly if the teacher manually activated force closure mode
+    if consumed == 1:
+        st.title("❌ Session Terminated")
+        st.error("The admin has closed this testing session. No further entries are allowed.")
+        st.stop()
+
     if not st.session_state.auth and (current_local_epoch > (scheduled_start + 10800)):
         st.title("❌ Access Expired")
         st.error("The entrance window for this exam session has expired.")
@@ -454,6 +474,7 @@ else:
         st.title("🔐 Secure Access Environment")
         available_options = [user for user in passwords_matrix.keys() if user not in completed_usernames]
         
+        # FIX: End the session if all active/non-absent students have cleared it out completely
         if not available_options:
             st.title("📝 Session Complete")
             st.success("Thank you! Your exam has been successfully submitted.")
