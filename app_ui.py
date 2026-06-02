@@ -458,7 +458,7 @@ else:
     current_server_time = time.time()
 
     if current_server_time < scheduled_start:
-        st_autorefresh(interval=2000, key="empty_countdown_refresh")
+        st_autorefresh(interval=1000, key="empty_countdown_refresh")
         readable_target_time = datetime.datetime.fromtimestamp(scheduled_start).strftime('%Y-%m-%d %H:%M:%S')
         
         st.markdown(f"""
@@ -569,8 +569,6 @@ else:
         if remaining == 0:
             process_and_submit_exam()
 
-        # FIXED RADIO HANDLER FOR CLOUD ENVIRONMENTS
-        # Define callback function to save responses automatically to session_state
         def save_answer(q_idx):
             st.session_state.answers[q_idx] = st.session_state[f"radio_q_{q_idx}"]
 
@@ -581,7 +579,6 @@ else:
             saved_choice = st.session_state.answers.get(i, None)
             default_index = q["options"].index(saved_choice) if saved_choice in q["options"] else None
 
-            # Added the on_change callback parameter to keep things synchronized without explicit reruns
             chosen_option = st.radio(
                 label=f"Choose option for question {i+1}:",
                 options=q["options"],
