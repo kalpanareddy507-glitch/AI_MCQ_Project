@@ -340,15 +340,20 @@ elif not exam_id and not review_mode:
     st.write("---")
     st.subheader("📅 Schedule Activation Configuration (Local Time)")
     
-    # FIX: Add a 5-minute safety buffer into the dynamic visual configuration so it never initializes expired
-    current_local = get_current_local_datetime()
-    buffered_local = current_local + datetime.timedelta(minutes=5)
+    # CRITICAL FIX: Initialize session state keys for the widgets if they don't exist yet
+    if "admin_chosen_date" not in st.session_state or "admin_chosen_time" not in st.session_state:
+        current_local = get_current_local_datetime()
+        buffered_local = current_local + datetime.timedelta(minutes=5)
+        st.session_state.admin_chosen_date = buffered_local.date()
+        st.session_state.admin_chosen_time = buffered_local.time()
     
     col1, col2 = st.columns(2)
     with col1:
-        chosen_date = st.date_input("Select Start Date", buffered_local.date())
+        # Binding directly to key="admin_chosen_date" saves user alterations automatically
+        chosen_date = st.date_input("Select Start Date", key="admin_chosen_date")
     with col2:
-        chosen_time = st.time_input("Select Start Time (24Hr format)", buffered_local.time())
+        # Binding directly to key="admin_chosen_time" saves dropdown picker choices perfectly
+        chosen_time = st.time_input("Select Start Time (24Hr format)", key="admin_chosen_time")
 
     if st.button("Generate Secure Exam Suite", type="primary"):
         if not topic.strip():
@@ -377,6 +382,10 @@ elif not exam_id and not review_mode:
             student_link = f"{base_url}/?exam_id={exam}"
             st.session_state.admin_exam_target = exam
             st.query_params.clear()
+
+            # Clean up the creation widget variables from state so next load recreates standard defaults
+            if "admin_chosen_date" in st.session_state: del st.session_state.admin_chosen_date
+            if "admin_chosen_time" in st.session_state: del st.session_state.admin_chosen_time
 
             st.success(f"Exam Suite Generated Successfully!")
             st.markdown(f"""
@@ -425,7 +434,6 @@ else:
         """, unsafe_allow_html=True)
         st.stop()
 
-    # FIX: Expanded absolute entry lock buffer window to 3 hours (10800 seconds) so old execution setups don't immediately lock students out.
     if not st.session_state.auth and (current_local_epoch > (scheduled_start + 10800)):
         st.title("❌ Access Expired")
         st.error("The entrance window for this exam session has expired.")
