@@ -1,4 +1,4 @@
-name: Zero-Code Database Migration to Supabase
+name: Zero-Code Database Migration to Cloud DB
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-to-supabase:
+  sync-to-cloud:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,11 +23,9 @@ jobs:
       run: |
         pip install psycopg2-binary
 
-    - name: Database Migration Execution Stream
+    - name: Cloud Database Migration Stream
       env:
-        DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
-        DB_USER: ${{ secrets.SUPABASE_DB_USER }}
-        DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        TARGET_URL: ${{ secrets.SUPABASE_DB_URL }}
       run: |
         python -c "
         import os, sqlite3, psycopg2
@@ -36,25 +34,20 @@ jobs:
             print('⚠️ Local database file exams_v3.db not found!')
             exit(0)
 
-        print('Connecting safely to Supabase pooler host using explicit parameters...')
+        print('Connecting cleanly to your cloud database instance...')
          
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
          
+        db_url = os.environ.get('TARGET_URL', '')
+
         try:
-            # Connect using explicit keyword arguments to guarantee tenant identification
-            pg_conn = psycopg2.connect(
-                host=os.environ.get('DB_HOST'),
-                user=os.environ.get('DB_USER'),
-                password=os.environ.get('DB_PASSWORD'),
-                dbname='postgres',
-                port=6543,
-                connect_timeout=20
-            )
+            # Render accepts standard connection strings natively without dropping connections
+            pg_conn = psycopg2.connect(db_url, connect_timeout=15)
             pg_cursor = pg_conn.cursor()
-            print('✅ Connected to Supabase Pooler successfully!')
+            print('✅ Connected to Cloud Database successfully!')
         except Exception as conn_error:
-            print(f'❌ Failed to establish link with Supabase: {conn_error}')
+            print(f'❌ Connection failed: {conn_error}')
             sqlite_conn.close()
             exit(1)
          
@@ -91,7 +84,7 @@ jobs:
                 print(f'Syncing complete for table: {table}')
                      
             pg_conn.commit()
-            print('🎉 All data records have successfully mirrored over to your Supabase instance!')
+            print('🎉 All data records have successfully mirrored over to your cloud database!')
         except Exception as e:
             print(f'Migration encountered an error: {e}')
             pg_conn.rollback()
