@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 conn.commit()
 
 # =========================================================
-# SYSTEM CORE HELPERS
+# SYSTEM CORE HELPERS & GENERATION ENGINE
 # =========================================================
 def token(n=6):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
@@ -122,7 +122,7 @@ def token(n=6):
 @st.cache_data(ttl=600)
 def fetch_text(topic):
     try:
-        q = urllib.parse.quote(topic + " wiki summary")
+        q = urllib.parse.quote(topic + " wiki summary structures")
         url = f"https://html.duckduckgo.com/html/?q={q}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -130,38 +130,66 @@ def fetch_text(topic):
         snippets = re.findall(r'<a class="result__snippet"[^>]*>(.*?)</a>', html)
         return " ".join([re.sub(r"<.*?>", "", s) for s in snippets])
     except:
-        return f"{topic} is an important concept."
+        return ""
 
 def generate_questions(topic, n):
-    text = fetch_text(topic)
-    sentences = [s for s in text.split(".") if len(s) > 20]
-    if not sentences:
-        sentences = [f"{topic} concept explanation"]
+    raw_text = fetch_text(topic)
+    
+    backup_vocab = {
+        "frameworks": ["Architecture", "Infrastructure", "Methodology", "Paradigm", "Protocol", "Ecosystem"],
+        "analytics": ["Quantitative", "Assessment", "Metric", "Optimization", "Stochastic", "Evaluation"],
+        "development": ["Integration", "Deployment", "Compilation", "Execution", "Automation", "Pipeline"]
+    }
+    all_pool = backup_vocab["frameworks"] + backup_vocab["analytics"] + backup_vocab["development"]
+    
+    sentences = [s.strip() for s in raw_text.split(".") if len(s.strip()) > 25]
+    
+    while len(sentences) < n:
+        sentences.append(f"The core operational framework of {topic} enables high-performance execution patterns")
+        sentences.append(f"Strategic application of {topic} principles establishes structural paradigm integrity")
+        sentences.append(f"A key requirement in {topic} methodologies involves managing systemic lifecycle parameters")
+        sentences.append(f"Advanced evaluation of {topic} designs optimizes processing throughput and analytics")
 
-    words = list(set(w.strip(".,()\"'") for s in sentences for w in s.split() if len(w) > 4))
     questions = []
     difficulties = ["Easy", "Medium", "Hard"]
 
     for i in range(n):
-        s = sentences[i % len(sentences)]
-        clean_words = [w.strip(".,()\"'") for w in s.split() if len(w) > 4]
-        if not clean_words:
-            clean_words = [topic]
+        current_sentence = sentences[i % len(sentences)]
+        words = [w.strip(".,()\"';:") for w in current_sentence.split() if len(w.strip(".,()\"';:")) > 4 and w.lower() != topic.lower()]
+        
+        if not words:
+            words = random.sample(all_pool, k=3)
+            
+        answer = random.choice(words)
+        q_type = "MCQ" if i % 2 == 0 else "FITB"
+        
+        if q_type == "MCQ":
+            q_text = f"Regarding the architecture of {topic}, evaluate the context details to determine the matching concept:\n\n\"{current_sentence}\""
+        else:
+            pattern = re.compile(re.escape(answer), re.IGNORECASE)
+            masked_sentence = pattern.sub("_______", current_sentence, count=1)
+            q_text = f"Complete the following specialized statement concerning {topic} principles:\n\n\"{masked_sentence}\""
 
-        answer = clean_words[0]
-        q = f"Identify key concept from:\n\n{s[:120]}..."
-        distractors = random.sample(words, k=min(3, len(words))) if len(words) >= 3 else ["Framework","System","Process"]
+        remaining_pool = list(set([w for w in words if w.lower() != answer.lower()] + all_pool))
+        distractors = random.sample(remaining_pool, k=min(3, len(remaining_pool)))
+        
+        while len(distractors) < 3:
+            extra = random.choice(all_pool)
+            if extra not in distractors and extra.lower() != answer.lower():
+                distractors.append(extra)
 
         options = list(set(distractors + [answer]))
         random.shuffle(options)
         level = difficulties[i % 3] 
 
         questions.append({
-            "q": q,
+            "q": q_text,
             "options": options,
             "correct": answer,
-            "level": level
+            "level": level,
+            "type": q_type
         })
+        
     return questions
 
 def get_base_url():
@@ -275,6 +303,8 @@ elif review_mode and view_type == "answers":
     for i, q in enumerate(qs):
         user_choice = student_specific_answers.get(str(i))
         correct_choice = q["correct"]
+        q_label = "Multiple-Choice" if q.get("type", "MCQ") == "MCQ" else "Fill-In-The-Blank"
+        
         if user_choice is None:
             status_text, status_color = "⚠️ Unanswered", "#64748b"
         elif user_choice == correct_choice:
@@ -282,7 +312,7 @@ elif review_mode and view_type == "answers":
         else:
             status_text, status_color = f"❌ Wrong Match (Selected: '{user_choice}' | Correct: '{correct_choice}')", "#B91C1C"
             
-        st.markdown(f'<div class="sheet-row"><div><strong>Question {i+1}</strong></div><div style="color: {status_color}; font-weight: bold;">{status_text}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="sheet-row"><div><strong>Question {i+1} ({q_label})</strong></div><div style="color: {status_color}; font-weight: bold;">{status_text}</div></div>', unsafe_allow_html=True)
         
     if st.button("Back to Control Router"):
         st.query_params.clear()
@@ -358,10 +388,10 @@ elif review_mode and view_type == "submitted":
 # ROUTE 5: TEACHER CREATION PANEL
 # =========================================================
 elif not exam_id and not review_mode:
-    st.title("🎓 AI MCQ Generator (Admin Panel)")
+    st.title("🎓 AI MCQ & FITB Generator (Admin Panel)")
 
     topic = st.text_input("Topic Context", value="", placeholder="Enter your Topic")
-    num_q = st.number_input("Questions Count", 1, 50, 6)
+    num_q = st.number_input("Questions Count", 2, 50, 6)
     fixed_score_weight = st.number_input("Fixed Marks Per Question", 1.0, 100.0, 1.0)
     student_headcount = st.number_input("Manually Add Student Count", 1, 100, 3)
 
@@ -378,7 +408,8 @@ elif not exam_id and not review_mode:
     with col1:
         chosen_date = st.date_input("Select Start Date", key="admin_chosen_date")
     with col2:
-        chosen_time = st.time_input("Select Start Time (24Hr format)", key="admin_chosen_time")
+        # Step parameter added here to force 5-minute increments
+        chosen_time = st.time_input("Select Start Time (24Hr format)", step=300, key="admin_chosen_time")
 
     if st.button("Generate Secure Exam Suite", type="primary"):
         if not topic.strip():
@@ -437,7 +468,6 @@ else:
     cursor.execute("SELECT exam_id, username, password, questions, created_at, expires_at, consumed, exam_duration, student_answers, target_students, points_per_question, scheduled_start FROM exams WHERE exam_id=?", (exam_id,))
     data = cursor.fetchone()
 
-    # FIX: Safety Fallback routing to prevent parameters blank screen flashing 
     if not data:
         st.query_params.clear()
         st.query_params["review"] = exam_id
@@ -449,7 +479,6 @@ else:
     
     current_local_epoch = get_current_local_epoch()
 
-    # LOCK SCREEN CHECK
     if current_local_epoch < scheduled_start:
         st_autorefresh(interval=2000, key="empty_countdown_refresh")
         
@@ -524,7 +553,6 @@ else:
         m, s = divmod(remaining, 60)
         st.warning(f"Time remaining: {m:02d}:{s:02d}")
 
-        # FIX: Re-designed submission data handler to capture selections using fallback dictionary check to prevent KeyError 
         def process_and_submit_exam():
             cursor.execute("SELECT student_answers FROM exams WHERE exam_id=?", (exam_id,))
             existing_answers_raw = cursor.fetchone()[0]
@@ -534,11 +562,10 @@ else:
             master_answers_dict[student_profile_name] = {}
             for k in range(len(qs)):
                 radio_key = f"radio_q_{k}"
-                # Safe look up: Check state dictionary, otherwise fall back on loaded memory state tracking
                 val = st.session_state.get(radio_key, st.session_state.answers.get(k))
                 if val is not None:
                     master_answers_dict[student_profile_name][str(k)] = val
-                
+            
             cursor.execute("UPDATE exams SET student_answers=? WHERE exam_id=?", (json.dumps(master_answers_dict), exam_id))
             
             final_calculated_score = 0.0
@@ -565,13 +592,13 @@ else:
         if remaining == 0:
             process_and_submit_exam()
 
-        # FIX: Safe key state lookups prevent KeyError execution tracking failures
         def save_answer(q_idx):
             radio_key = f"radio_q_{q_idx}"
             if radio_key in st.session_state:
                 st.session_state.answers[q_idx] = st.session_state[radio_key]
 
         for i, q in enumerate(qs):
+            # Type labels variable removed to only feature the clean "Question X" text header format
             st.markdown(f'### Question {i+1}')
             st.write(q["q"])
 

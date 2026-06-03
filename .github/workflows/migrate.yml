@@ -60,10 +60,19 @@ jobs:
                 cols = sqlite_cursor.fetchall()
                 col_names = [c[1] for c in cols]
                 
-                # Create fallback table structures on remote if missing
-                col_defs = ', '.join([f'\"{c[1]}\" TEXT' for c in cols])
-                pg_cursor.execute(f'CREATE TABLE IF NOT EXISTS public.\"{table}\" ({col_defs});')
-                pg_cursor.execute(f'TRUNCATE TABLE public.\"{table}\" CASCADE;')
+                # Dynamic Type Map conversion helper
+                def get_pg_type(sqlite_type):
+                    s_type = sqlite_type.upper()
+                    if 'INT' in s_type: return 'INTEGER'
+                    if 'REAL' in s_type or 'FLOA' in s_type: return 'TEXT' # Safely falls back to text for varying sizes
+                    return 'TEXT'
+
+                # Drop the existing table structure cleanly to avoid duplicate relation errors
+                pg_cursor.execute(f'DROP TABLE IF EXISTS public.\"{table}\" CASCADE;')
+                
+                # Create dynamic fallback table structures on remote cleanly
+                col_defs = ', '.join([f'\"{c[1]}\" {get_pg_type(c[2])}' for c in cols])
+                pg_cursor.execute(f'CREATE TABLE public.\"{table}\" ({col_defs});')
                 
                 # Push rows smoothly
                 placeholders = ', '.join(['%s'] * len(col_names))
@@ -71,11 +80,13 @@ jobs:
                 
                 for row in rows:
                     pg_cursor.execute(f'INSERT INTO public.\"{table}\" ({col_string}) VALUES ({placeholders});', row)
+                print(f'Syncing complete for table: {table}')
                     
             pg_conn.commit()
             print('🎉 All data records have successfully mirrored over to your Supabase instance!')
         except Exception as e:
             print(f'Migration encountered an error: {e}')
+            pg_conn.rollback()
         finally:
             sqlite_conn.close()
             pg_conn.close()
