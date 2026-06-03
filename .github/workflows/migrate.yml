@@ -25,7 +25,9 @@ jobs:
 
     - name: Database Migration Execution Stream
       env:
-        TARGET_URL: ${{ secrets.SUPABASE_DB_URL }}
+        DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+        DB_USER: ${{ secrets.SUPABASE_DB_USER }}
+        DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       run: |
         python -c "
         import os, sqlite3, psycopg2
@@ -34,20 +36,21 @@ jobs:
             print('⚠️ Local database file exams_v3.db not found!')
             exit(0)
 
-        print('Connecting safely to Supabase pooler host...')
+        print('Connecting safely to Supabase pooler host using explicit parameters...')
          
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
          
-        db_url = os.environ.get('TARGET_URL', '')
-        
-        # Clean up trailing connection tracking flags if present
-        if '?' in db_url:
-            db_url = db_url.split('?')[0]
-
         try:
-            # Connect over the pooler string directly
-            pg_conn = psycopg2.connect(db_url, connect_timeout=20)
+            # Connect using explicit keyword arguments to guarantee tenant identification
+            pg_conn = psycopg2.connect(
+                host=os.environ.get('DB_HOST'),
+                user=os.environ.get('DB_USER'),
+                password=os.environ.get('DB_PASSWORD'),
+                dbname='postgres',
+                port=6543,
+                connect_timeout=20
+            )
             pg_cursor = pg_conn.cursor()
             print('✅ Connected to Supabase Pooler successfully!')
         except Exception as conn_error:
