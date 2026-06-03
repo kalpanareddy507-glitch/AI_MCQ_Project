@@ -25,7 +25,7 @@ jobs:
 
     - name: Cloud Database Migration Stream
       env:
-        TARGET_URL: ${{ secrets.SUPABASE_DB_URL }}
+        TARGET_URL: ${{ secrets.RENDER_DB_URL }}
       run: |
         python -c "
         import os, sqlite3, psycopg2
@@ -34,18 +34,23 @@ jobs:
             print('⚠️ Local database file exams_v3.db not found!')
             exit(0)
 
-        print('Connecting cleanly to your cloud database instance...')
+        db_url = os.environ.get('TARGET_URL', '')
+        
+        # Security catch: Make sure the secret isn't blank
+        if not db_url:
+            print('❌ Error: The RENDER_DB_URL secret is missing or empty in GitHub settings!')
+            exit(1)
+
+        print('Connecting cleanly to your remote Render database instance...')
          
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
-         
-        db_url = os.environ.get('TARGET_URL', '')
 
         try:
-            # Render accepts standard connection strings natively without dropping connections
-            pg_conn = psycopg2.connect(db_url, connect_timeout=15)
+            # We explicitly pass the connection string to force an external internet connection
+            pg_conn = psycopg2.connect(dsn=db_url, connect_timeout=30)
             pg_cursor = pg_conn.cursor()
-            print('✅ Connected to Cloud Database successfully!')
+            print('✅ Connected to Render Database successfully!')
         except Exception as conn_error:
             print(f'❌ Connection failed: {conn_error}')
             sqlite_conn.close()
@@ -84,7 +89,7 @@ jobs:
                 print(f'Syncing complete for table: {table}')
                      
             pg_conn.commit()
-            print('🎉 All data records have successfully mirrored over to your cloud database!')
+            print('🎉 All data records have successfully mirrored over to your Render database!')
         except Exception as e:
             print(f'Migration encountered an error: {e}')
             pg_conn.rollback()
