@@ -39,17 +39,16 @@ jobs:
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
          
-        # Safely extract environment parameters without string injection errors
         db_url = os.environ.get('TARGET_URL', '')
         
-        # Clean query parameters (?options=project...) if copied from newer Supabase URI panels
+        # Clean up pooler tracking arguments if they exist to keep the DSN clean
         if '?' in db_url:
             db_url = db_url.split('?')[0]
 
         try:
             pg_conn = psycopg2.connect(db_url)
             pg_cursor = pg_conn.cursor()
-            print('✅ Connected to Supabase directly and successfully!')
+            print('✅ Connected to Supabase Pooler successfully!')
         except Exception as conn_error:
             print(f'❌ Failed to establish link with Supabase: {conn_error}')
             sqlite_conn.close()
