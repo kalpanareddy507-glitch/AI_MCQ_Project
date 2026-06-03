@@ -23,7 +23,7 @@ jobs:
       run: |
         pip install psycopg2-binary
 
-    - name: Direct Database Migration Stream
+    - name: Database Migration Execution Stream
       env:
         TARGET_URL: ${{ secrets.SUPABASE_DB_URL }}
       run: |
@@ -34,19 +34,20 @@ jobs:
             print('⚠️ Local database file exams_v3.db not found!')
             exit(0)
 
-        print('Connecting directly to Supabase cloud instance...')
+        print('Connecting safely to Supabase pooler host...')
          
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
          
         db_url = os.environ.get('TARGET_URL', '')
         
-        # Clean up pooler tracking arguments if they exist to keep the DSN clean
+        # Clean up trailing connection tracking flags if present
         if '?' in db_url:
             db_url = db_url.split('?')[0]
 
         try:
-            pg_conn = psycopg2.connect(db_url)
+            # Connect over the pooler string directly
+            pg_conn = psycopg2.connect(db_url, connect_timeout=20)
             pg_cursor = pg_conn.cursor()
             print('✅ Connected to Supabase Pooler successfully!')
         except Exception as conn_error:
