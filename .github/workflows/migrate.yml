@@ -29,59 +29,64 @@ jobs:
       run: |
         python -c "
         import os, sqlite3, psycopg2
-        
+         
         if not os.path.exists('exams_v3.db'):
             print('⚠️ Local database file exams_v3.db not found!')
             exit(0)
 
         print('Connecting directly to Supabase cloud instance...')
-        
-        # 1. Open Connections using the raw Connection URI directly
+         
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
+         
+        # Safely extract environment parameters without string injection errors
+        db_url = os.environ.get('TARGET_URL', '')
         
-        pg_conn = psycopg2.connect('$TARGET_URL')
-        pg_cursor = pg_conn.cursor()
-        print('✅ Connected to Supabase directly and successfully!')
-        
-        # 2. Read and Migrate Local Tables Dynamically
+        # Clean query parameters (?options=project...) if copied from newer Supabase URI panels
+        if '?' in db_url:
+            db_url = db_url.split('?')[0]
+
+        try:
+            pg_conn = psycopg2.connect(db_url)
+            pg_cursor = pg_conn.cursor()
+            print('✅ Connected to Supabase directly and successfully!')
+        except Exception as conn_error:
+            print(f'❌ Failed to establish link with Supabase: {conn_error}')
+            sqlite_conn.close()
+            exit(1)
+         
         try:
             sqlite_cursor.execute(\"SELECT name FROM sqlite_master WHERE type='table';\")
             tables = [t[0] for t in sqlite_cursor.fetchall() if not t[0].startswith('sqlite_')]
-            
+             
             for table in tables:
                 sqlite_cursor.execute(f'SELECT * FROM {table};')
                 rows = sqlite_cursor.fetchall()
                 if not rows:
                     continue
-                
-                # Fetch local columns
+                 
                 sqlite_cursor.execute(f'PRAGMA table_info({table});')
                 cols = sqlite_cursor.fetchall()
                 col_names = [c[1] for c in cols]
-                
-                # Dynamic Type Map conversion helper
+                 
                 def get_pg_type(sqlite_type):
                     s_type = sqlite_type.upper()
                     if 'INT' in s_type: return 'INTEGER'
-                    if 'REAL' in s_type or 'FLOA' in s_type: return 'TEXT' # Safely falls back to text for varying sizes
+                    if 'REAL' in s_type or 'FLOA' in s_type: return 'TEXT'
                     return 'TEXT'
 
-                # Drop the existing table structure cleanly to avoid duplicate relation errors
                 pg_cursor.execute(f'DROP TABLE IF EXISTS public.\"{table}\" CASCADE;')
-                
-                # Create dynamic fallback table structures on remote cleanly
+                 
                 col_defs = ', '.join([f'\"{c[1]}\" {get_pg_type(c[2])}' for c in cols])
                 pg_cursor.execute(f'CREATE TABLE public.\"{table}\" ({col_defs});')
-                
-                # Push rows smoothly
+                 
                 placeholders = ', '.join(['%s'] * len(col_names))
                 col_string = ', '.join([f'\"{c}\"' for c in col_names])
-                
+                 
                 for row in rows:
                     pg_cursor.execute(f'INSERT INTO public.\"{table}\" ({col_string}) VALUES ({placeholders});', row)
                 print(f'Syncing complete for table: {table}')
-                    
+                     
             pg_conn.commit()
             print('🎉 All data records have successfully mirrored over to your Supabase instance!')
         except Exception as e:
