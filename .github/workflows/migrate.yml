@@ -1,4 +1,4 @@
-name: Zero-Code Database Migration to Cloud DB
+name: Zero-Code Database Migration to Neon Postgres
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-to-cloud:
+  sync-to-neon:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,9 +23,9 @@ jobs:
       run: |
         pip install psycopg2-binary
 
-    - name: Cloud Database Migration Stream
+    - name: Neon Cloud Database Migration Stream
       env:
-        TARGET_URL: ${{ secrets.RENDER_DB_URL }}
+        TARGET_URL: ${{ secrets.NEON_DB_URL }}
       run: |
         python -c "
         import os, sqlite3, psycopg2
@@ -36,21 +36,19 @@ jobs:
 
         db_url = os.environ.get('TARGET_URL', '')
         
-        # Security catch: Make sure the secret isn't blank
         if not db_url:
-            print('❌ Error: The RENDER_DB_URL secret is missing or empty in GitHub settings!')
+            print('❌ Error: The NEON_DB_URL secret is missing in GitHub settings!')
             exit(1)
 
-        print('Connecting cleanly to your remote Render database instance...')
+        print('Connecting cleanly to your remote Neon Postgres instance...')
          
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
 
         try:
-            # We explicitly pass the connection string to force an external internet connection
-            pg_conn = psycopg2.connect(dsn=db_url, connect_timeout=30)
+            pg_conn = psycopg2.connect(db_url, connect_timeout=20)
             pg_cursor = pg_conn.cursor()
-            print('✅ Connected to Render Database successfully!')
+            print('✅ Connected to Neon Database successfully!')
         except Exception as conn_error:
             print(f'❌ Connection failed: {conn_error}')
             sqlite_conn.close()
@@ -89,7 +87,7 @@ jobs:
                 print(f'Syncing complete for table: {table}')
                      
             pg_conn.commit()
-            print('🎉 All data records have successfully mirrored over to your Render database!')
+            print('🎉 All data records have successfully mirrored over to your Neon database!')
         except Exception as e:
             print(f'Migration encountered an error: {e}')
             pg_conn.rollback()
