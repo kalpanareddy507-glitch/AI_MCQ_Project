@@ -1,4 +1,4 @@
-name: Zero-Code Database Migration to Neon Postgres
+name: Zero-Code Database Migration to Cloud MySQL
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-to-neon:
+  sync-to-mysql:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,77 +21,91 @@ jobs:
 
     - name: Install Data Migration Tools
       run: |
-        pip install psycopg2-binary
+        pip install mysql-connector-python
 
-    - name: Neon Cloud Database Migration Stream
+    - name: MySQL Cloud Database Migration Stream
       env:
-        TARGET_URL: ${{ secrets.NEON_DB_URL }}
+        TARGET_URL: ${{ secrets.MYSQL_DB_URL }}
       run: |
         python -c "
-        import os, sqlite3, psycopg2
-         
+        import os, sqlite3, urllib.parse
+        import mysql.connector
+
         if not os.path.exists('exams_v3.db'):
             print('⚠️ Local database file exams_v3.db not found!')
             exit(0)
 
         db_url = os.environ.get('TARGET_URL', '')
-        
         if not db_url:
-            print('❌ Error: The NEON_DB_URL secret is missing in GitHub settings!')
+            print('❌ Error: The MYSQL_DB_URL secret is missing in GitHub settings!')
             exit(1)
 
-        print('Connecting cleanly to your remote Neon Postgres instance...')
-         
+        print('Parsing parameters and connecting to your cloud MySQL instance...')
+        
+        # Parse connection URI components for MySQL configuration parameters
+        urllib.parse.uses_netloc.append('mysql')
+        url = urllib.parse.urlparse(db_url)
+        
         sqlite_conn = sqlite3.connect('exams_v3.db')
         sqlite_cursor = sqlite_conn.cursor()
 
         try:
-            pg_conn = psycopg2.connect(db_url, connect_timeout=20)
-            pg_cursor = pg_conn.cursor()
-            print('✅ Connected to Neon Database successfully!')
+            # Connect directly over secure parameters to Aiven MySQL
+            mysql_conn = mysql.connector.connect(
+                host=url.hostname,
+                port=url.port or 3306,
+                user=url.username,
+                password=url.password,
+                database=url.path[1:] or 'defaultdb',
+                ssl_disabled=False
+            )
+            mysql_cursor = mysql_conn.cursor()
+            print('✅ Connected to Cloud MySQL Database successfully!')
         except Exception as conn_error:
             print(f'❌ Connection failed: {conn_error}')
             sqlite_conn.close()
             exit(1)
-         
+
         try:
             sqlite_cursor.execute(\"SELECT name FROM sqlite_master WHERE type='table';\")
             tables = [t[0] for t in sqlite_cursor.fetchall() if not t[0].startswith('sqlite_')]
-             
+
             for table in tables:
                 sqlite_cursor.execute(f'SELECT * FROM {table};')
                 rows = sqlite_cursor.fetchall()
                 if not rows:
                     continue
-                 
+
                 sqlite_cursor.execute(f'PRAGMA table_info({table});')
                 cols = sqlite_cursor.fetchall()
                 col_names = [c[1] for c in cols]
-                 
-                def get_pg_type(sqlite_type):
+
+                def get_mysql_type(sqlite_type):
                     s_type = sqlite_type.upper()
-                    if 'INT' in s_type: return 'INTEGER'
+                    if 'INT' in s_type: return 'INT'
                     if 'REAL' in s_type or 'FLOA' in s_type: return 'TEXT'
                     return 'TEXT'
 
-                pg_cursor.execute(f'DROP TABLE IF EXISTS public.\"{table}\" CASCADE;')
-                 
-                col_defs = ', '.join([f'\"{c[1]}\" {get_pg_type(c[2])}' for c in cols])
-                pg_cursor.execute(f'CREATE TABLE public.\"{table}\" ({col_defs});')
-                 
+                mysql_cursor.execute(f'DROP TABLE IF EXISTS `{table}`;')
+
+                col_defs = ', '.join([f'`{c[1]}` {get_mysql_type(c[2])}' for c in cols])
+                mysql_cursor.execute(f'CREATE TABLE `{table}` ({col_defs});')
+
                 placeholders = ', '.join(['%s'] * len(col_names))
-                col_string = ', '.join([f'\"{c}\"' for c in col_names])
-                 
+                col_string = ', '.join([f'`{c}`' for c in col_names])
+
                 for row in rows:
-                    pg_cursor.execute(f'INSERT INTO public.\"{table}\" ({col_string}) VALUES ({placeholders});', row)
-                print(f'Syncing complete for table: {table}')
-                     
-            pg_conn.commit()
-            print('🎉 All data records have successfully mirrored over to your Neon database!')
+                    # Format data safely into MySQL structure
+                    sanitized_row = tuple([str(val) if val is not None else '' for val in row])
+                    mysql_cursor.execute(f'INSERT INTO `{table}` ({col_string}) VALUES ({placeholders});', sanitized_row)
+                print(f'Syncing complete for MySQL table: {table}')
+
+            mysql_conn.commit()
+            print('🎉 All data records have successfully mirrored over to your cloud MySQL instance!')
         except Exception as e:
             print(f'Migration encountered an error: {e}')
-            pg_conn.rollback()
+            mysql_conn.rollback()
         finally:
             sqlite_conn.close()
-            pg_conn.close()
+            mysql_conn.close()
         "
