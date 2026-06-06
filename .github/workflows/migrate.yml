@@ -25,7 +25,7 @@ jobs:
 
     - name: MySQL Cloud Database Migration Stream
       env:
-        TARGET_URL: ${{ secrets.MYSQL_DB_URL }}
+        TARGET_URL: mysql://postgres:password@127.0.0.1:3306/mcq_db
       run: |
         python -c "
         import os, sqlite3, urllib.parse
@@ -71,7 +71,7 @@ jobs:
             tables = [t[0] for t in sqlite_cursor.fetchall() if not t[0].startswith('sqlite_')]
 
             for table in tables:
-                sqlite_cursor.execute(f'SELECT * FROM {table};')
+                sqlite_cursor.execute(f'SELECT * FROM table_name;')
                 rows = sqlite_cursor.fetchall()
                 if not rows:
                     continue
