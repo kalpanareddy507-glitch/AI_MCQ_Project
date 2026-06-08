@@ -2,21 +2,22 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:15-alpine
-    container_name: mcq_postgres_db
+    image: mysql:8.0
+    container_name: mcq_mysql_db
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mcq_db
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: mcq_db
+      MYSQL_USER: postgres
+      MYSQL_PASSWORD: password
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     networks:
       - mcq_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d mcq_db"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "postgres", "-ppassword"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -40,7 +41,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/mcq_db
+      - DATABASE_URL=mysql+pymysql://postgres:AVNS_gHTT0Fcpm7LSxGu_eb0@db:3306/mcq_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       db:
@@ -58,7 +59,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/mcq_db
+      - DATABASE_URL=mysql+pymysql://postgres:AVNS_gHTT0Fcpm7LSxGu_eb0@db:3306/mcq_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       db:
@@ -81,7 +82,7 @@ services:
       - mcq_network
 
 volumes:
-  postgres_data:
+  mysql_data:
 
 networks:
   mcq_network:
