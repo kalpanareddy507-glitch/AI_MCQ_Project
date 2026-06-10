@@ -41,7 +41,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=mysql+pymysql://postgres:AVNS_gHTT0Fcpm7LSxGu_eb0@db:3306/mcq_db
+      - DATABASE_URL=mysql+pymysql://root:password@db:3306/mcq_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       db:
@@ -59,7 +59,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - DATABASE_URL=mysql+pymysql://postgres:AVNS_gHTT0Fcpm7LSxGu_eb0@db:3306/mcq_db
+      - DATABASE_URL=mysql+pymysql://root:password@db:3306/mcq_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       db:
